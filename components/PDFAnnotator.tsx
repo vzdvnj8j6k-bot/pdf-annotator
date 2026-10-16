@@ -666,6 +666,21 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   }
 
   const textSubmittingRef = useRef(false)
+  const handleTextSubmitRef = useRef<() => void>(() => {})
+
+  // Keep ref up-to-date so document listener always calls fresh version
+  useEffect(() => { handleTextSubmitRef.current = handleTextSubmit })
+
+  // Submit when clicking outside the textarea
+  useEffect(() => {
+    if (!textInput) return
+    function onDown(e: PointerEvent) {
+      if (textInputRef.current?.contains(e.target as Node)) return
+      handleTextSubmitRef.current()
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [textInput])
 
   function handleTextSubmit() {
     if (!textInput || textSubmittingRef.current) return
