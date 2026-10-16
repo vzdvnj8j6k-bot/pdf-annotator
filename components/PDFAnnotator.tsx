@@ -364,6 +364,10 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
         else { ctx.moveTo(pts[0].x*physScale, pts[0].y*physScale); for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x*physScale, pts[i].y*physScale); ctx.stroke() }
         ctx.restore()
       }
+      // Redraw text annotations on top so eraser never visually removes them
+      for (const text of pa.texts ?? []) {
+        ctx.save(); ctx.font = `${text.fontSize*physScale}px sans-serif`; ctx.fillStyle = text.color; ctx.fillText(text.text, text.x*physScale, text.y*physScale); ctx.restore()
+      }
       ctx.save(); ctx.strokeStyle = 'rgba(150,150,150,0.6)'; ctx.lineWidth = 1.5*dpr; ctx.setLineDash([4*dpr, 3*dpr])
       ctx.beginPath(); ctx.arc(point.x*physScale, point.y*physScale, currentStroke.current.size*dpr, 0, Math.PI*2); ctx.stroke(); ctx.restore()
     } else {
@@ -414,23 +418,31 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     const capturedFontSize = fontSize
     const capturedColor = color
     const capturedEditingId = editingTextId
+    const capturedX = textInput.x
+    const capturedY = textInput.y
     setTextInput(null); setTextValue(''); setEditingTextId(null)
     setTimeout(() => { textSubmittingRef.current = false }, 100)
     if (!capturedText.trim()) return
-    const prevPage = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
+
+    // Compute updated annotations synchronously so annotationsRef is available
+    // immediately for hit detection on the next click
+    const page = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
     const hist = history.current.get(pageNum) ?? []
-    history.current.set(pageNum, [...hist, prevPage])
+    history.current.set(pageNum, [...hist, page])
     let updatedTexts: TextAnnotation[]
     if (capturedEditingId) {
-      updatedTexts = prevPage.texts.map(t => t.id === capturedEditingId ? { ...t, text: capturedText, fontSize: capturedFontSize, color: capturedColor } : t)
-      if (!updatedTexts.some(t => t.id === capturedEditingId)) updatedTexts = [...prevPage.texts, { id: capturedEditingId, x: textInput.x, y: textInput.y, text: capturedText, fontSize: capturedFontSize, color: capturedColor }]
+      updatedTexts = (page.texts ?? []).map(t => t.id === capturedEditingId ? { ...t, text: capturedText, fontSize: capturedFontSize, color: capturedColor } : t)
+      if (!updatedTexts.some(t => t.id === capturedEditingId)) updatedTexts = [...(page.texts ?? []), { id: capturedEditingId, x: capturedX, y: capturedY, text: capturedText, fontSize: capturedFontSize, color: capturedColor }]
     } else {
-      updatedTexts = [...prevPage.texts, { id: uuidv4(), x: textInput.x, y: textInput.y, text: capturedText, fontSize: capturedFontSize, color: capturedColor }]
+      updatedTexts = [...(page.texts ?? []), { id: uuidv4(), x: capturedX, y: capturedY, text: capturedText, fontSize: capturedFontSize, color: capturedColor }]
     }
-    const updated: PageAnnotations = { ...prevPage, texts: updatedTexts }
-    setAnnotations(prev => { const next = new Map(prev); next.set(pageNum, updated); return next })
+    const updated: PageAnnotations = { ...page, texts: updatedTexts }
+    // Sync ref immediately before any subsequent event can fire
+    const nextAnnotations = new Map(annotationsRef.current)
+    nextAnnotations.set(pageNum, updated)
+    annotationsRef.current = nextAnnotations
+    setAnnotations(nextAnnotations)
     scheduleSave(pageNum, updated)
-    // Immediately redraw annotation canvas so text appears without waiting for a re-render
     const annotCanvas = annotCanvasRefs.current[pageNum - 1]
     if (annotCanvas) {
       const dpr = dprRef.current
