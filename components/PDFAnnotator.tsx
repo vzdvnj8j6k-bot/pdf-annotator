@@ -704,8 +704,8 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
                       onBlur={handleTextSubmit}
                       className="absolute bg-transparent border-b border-blue-400 outline-none"
                       style={{
-                        left: textInput.x * scale * (annotCanvasRefs.current[p-1] ? annotCanvasRefs.current[p-1]!.getBoundingClientRect().width / annotCanvasRefs.current[p-1]!.width : 1),
-                        top: textInput.y * scale * (annotCanvasRefs.current[p-1] ? annotCanvasRefs.current[p-1]!.getBoundingClientRect().height / annotCanvasRefs.current[p-1]!.height : 1),
+                        left: textInput.x * scale,
+                        top: textInput.y * scale,
                         color, fontSize: fontSize * scale, minWidth: 100,
                       }}
                       placeholder="テキストを入力..."
