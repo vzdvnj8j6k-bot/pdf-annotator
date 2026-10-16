@@ -633,7 +633,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
               <div className="text-gray-400">PDFを読み込み中...</div>
             </div>
           ) : (
-            <div className="flex flex-col items-center py-6 gap-6 px-4">
+            <div className="flex flex-col items-center py-6 gap-6 px-8 min-w-max">
               {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
                 <div
                   key={p}
