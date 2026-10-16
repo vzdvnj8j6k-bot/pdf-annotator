@@ -63,7 +63,7 @@ export default function Toolbar({
         {TOOLS.map(t => (
           <div key={t.id} className="relative mx-auto">
             <button
-              onClick={() => onToolChange(tool === t.id ? 'none' : t.id)}
+              onClick={() => { onToolChange(tool === t.id ? 'none' : t.id); setHoveredTool(null) }}
               onMouseEnter={() => setHoveredTool(t.id)}
               onMouseLeave={() => setHoveredTool(null)}
               className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold transition-all
