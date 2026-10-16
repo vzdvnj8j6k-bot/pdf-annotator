@@ -233,7 +233,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     rendered.forEach(p => renderPageRef.current(p))
   }, [scale, totalPages])
 
-  // Redraw annotation layers when studyMode changes
+  // Redraw annotation layers when studyMode or tool changes (box border visibility depends on tool)
   useEffect(() => {
     const dpr = dprRef.current
     renderedPagesRef.current.forEach(p => {
@@ -243,7 +243,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
         redrawAnnotations(canvas, pa, scaleRef.current * dpr, dpr)
       }
     })
-  }, [studyMode])
+  }, [studyMode, tool])
 
   // Render initial pages once loading is done and canvases are in the DOM
   useEffect(() => {
@@ -311,18 +311,17 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       const boxH = lines.length * lh + pad * 2
       const bx = text.x * drawScale - pad
       const by = text.y * drawScale - fs - pad
-      // Box border
-      ctx.strokeStyle = 'rgba(80,100,240,0.4)'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3])
-      ctx.strokeRect(bx, by, boxW, boxH); ctx.setLineDash([])
-      // Text
-      ctx.fillStyle = text.color
-      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], bx + pad, by + pad + fs + i * lh)
-      // Resize handle (bottom-right) shown only in text tool mode
+      // Box border and resize handle only in text tool mode
       if (toolRef.current === 'text') {
+        ctx.strokeStyle = 'rgba(80,100,240,0.4)'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3])
+        ctx.strokeRect(bx, by, boxW, boxH); ctx.setLineDash([])
         const hs = 9
         ctx.fillStyle = 'rgba(80,100,240,0.75)'
         ctx.fillRect(bx + boxW - hs, by + boxH - hs, hs, hs)
       }
+      // Text
+      ctx.fillStyle = text.color
+      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], bx + pad, by + pad + fs + i * lh)
       ctx.restore()
     }
   }
