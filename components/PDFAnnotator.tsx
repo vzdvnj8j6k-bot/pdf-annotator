@@ -346,7 +346,12 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     }
     if (!currentStroke.current || drawingPage.current !== pageNum) return
     const point = getPoint(e)
-    currentStroke.current.points.push(point)
+    const isLineMode = tool === 'line' || tool === 'highlighter-line'
+    if (isLineMode) {
+      currentStroke.current.points = [currentStroke.current.points[0], point]
+    } else {
+      currentStroke.current.points.push(point)
+    }
     const ctx = annotCanvas.getContext('2d')!
     const pa = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
     if (tool === 'eraser') {
