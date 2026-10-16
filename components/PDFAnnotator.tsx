@@ -227,6 +227,14 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     })
   }, [studyMode])
 
+  // Render initial pages when PDF loads (fallback if IntersectionObserver misses them)
+  useEffect(() => {
+    if (!pdf || totalPages === 0) return
+    const start = Math.max(1, initialPage - 1)
+    const end = Math.min(totalPages, initialPage + 2)
+    for (let p = start; p <= end; p++) renderPage(p)
+  }, [pdf]) // eslint-disable-line
+
   // Scroll to initial page after load
   useEffect(() => {
     if (!isLoading && totalPages > 0 && initialPage > 1) {
