@@ -39,9 +39,7 @@ const LineSvg = () => (
   </svg>
 )
 
-const TOOLS: { id: Tool; label: string; icon: React.ReactNode }[] = [
-  { id: 'pen', label: 'ペン', icon: '✏️' },
-  { id: 'highlighter', label: 'マーカー', icon: '🖊️' },
+const UTIL_TOOLS: { id: Tool; label: string; icon: React.ReactNode }[] = [
   { id: 'text', label: 'テキスト', icon: 'T' },
   { id: 'eraser', label: '消しゴム', icon: '◻' },
 ]
@@ -59,59 +57,87 @@ export default function Toolbar({
     <div className="flex flex-col gap-3 p-3 bg-white border-r border-gray-200 shadow-sm w-16 items-center">
       {/* Tools */}
       <div className="flex flex-col gap-1 w-full">
-        {TOOLS.map(t => (
+        {/* Pen button — active for pen or pen-line */}
+        {(() => {
+          const isPenBase = tool === 'pen' || tool === 'line'
+          const isLineMode = tool === 'line' || tool === 'highlighter-line'
+          function handlePenClick() {
+            if (isPenBase) { onToolChange('none') }
+            else if (isLineMode) { onToolChange('line') }
+            else { onToolChange('pen') }
+            setHoveredTool(null)
+          }
+          return (
+            <div className="relative mx-auto">
+              <button onClick={handlePenClick} onMouseEnter={() => setHoveredTool('pen')} onMouseLeave={() => setHoveredTool(null)}
+                className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold transition-all
+                  ${isPenBase ? 'bg-blue-600 text-white shadow-md scale-105' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                ✏️
+              </button>
+              {hoveredTool === 'pen' && <Tooltip label={isPenBase ? 'ペン（解除）' : 'ペン'} />}
+            </div>
+          )
+        })()}
+        {/* Highlighter button — active for highlighter or highlighter-line */}
+        {(() => {
+          const isHlBase = tool === 'highlighter' || tool === 'highlighter-line'
+          const isLineMode = tool === 'line' || tool === 'highlighter-line'
+          function handleHlClick() {
+            if (isHlBase) { onToolChange('none') }
+            else if (isLineMode) { onToolChange('highlighter-line') }
+            else { onToolChange('highlighter') }
+            setHoveredTool(null)
+          }
+          return (
+            <div className="relative mx-auto">
+              <button onClick={handleHlClick} onMouseEnter={() => setHoveredTool('highlighter')} onMouseLeave={() => setHoveredTool(null)}
+                className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold transition-all
+                  ${isHlBase ? 'bg-yellow-400 text-white shadow-md scale-105' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                🖊️
+              </button>
+              {hoveredTool === 'highlighter' && <Tooltip label={isHlBase ? 'マーカー（解除）' : 'マーカー'} />}
+            </div>
+          )
+        })()}
+        {/* Straight line modifier — active for both pen-line and highlighter-line */}
+        {(() => {
+          const isLineMode = tool === 'line' || tool === 'highlighter-line'
+          function handleLineClick() {
+            if (tool === 'pen') { onToolChange('line') }
+            else if (tool === 'highlighter') { onToolChange('highlighter-line') }
+            else if (tool === 'line') { onToolChange('pen') }
+            else if (tool === 'highlighter-line') { onToolChange('highlighter') }
+            else { onToolChange('line') }
+            setHoveredTool(null)
+          }
+          const label = isLineMode ? '直線モード（解除）' : '直線モード'
+          return (
+            <div className="relative mx-auto">
+              <button onClick={handleLineClick} onMouseEnter={() => setHoveredTool('line-mode')} onMouseLeave={() => setHoveredTool(null)}
+                className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold transition-all
+                  ${isLineMode ? 'bg-blue-600 text-white shadow-md scale-105' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                <LineSvg />
+              </button>
+              {hoveredTool === 'line-mode' && <Tooltip label={label} />}
+            </div>
+          )
+        })()}
+        {/* Text and eraser */}
+        {UTIL_TOOLS.map(t => (
           <div key={t.id} className="relative mx-auto">
             <button
               onClick={() => { onToolChange(tool === t.id ? 'none' : t.id); setHoveredTool(null) }}
               onMouseEnter={() => setHoveredTool(t.id)}
               onMouseLeave={() => setHoveredTool(null)}
               className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold transition-all
-                ${tool === t.id
-                  ? 'bg-blue-600 text-white shadow-md scale-105'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
+                ${tool === t.id ? 'bg-blue-600 text-white shadow-md scale-105' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
             >
               {t.icon}
             </button>
-            {hoveredTool === t.id && (
-              <Tooltip label={tool === t.id ? `${t.label}（解除）` : t.label} />
-            )}
+            {hoveredTool === t.id && <Tooltip label={tool === t.id ? `${t.label}（解除）` : t.label} />}
           </div>
         ))}
-        {/* Straight line button — switches to line or highlighter-line based on current tool */}
-        <div className="relative mx-auto">
-          {(() => {
-            const isLineTool = tool === 'line' || tool === 'highlighter-line'
-            const isHlLine = tool === 'highlighter-line'
-            const label = isLineTool
-              ? `直線（${isHlLine ? 'マーカー' : 'ペン'}）解除`
-              : tool === 'highlighter' ? 'マーカー直線' : 'ペン直線'
-            function handleLineClick() {
-              if (isLineTool) { onToolChange('none') }
-              else if (tool === 'highlighter') { onToolChange('highlighter-line') }
-              else { onToolChange('line') }
-              setHoveredTool(null)
-            }
-            return (
-              <>
-                <button
-                  onClick={handleLineClick}
-                  onMouseEnter={() => setHoveredTool('line-unified')}
-                  onMouseLeave={() => setHoveredTool(null)}
-                  className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold transition-all
-                    ${isLineTool
-                      ? (isHlLine ? 'bg-yellow-400 text-white shadow-md scale-105' : 'bg-blue-600 text-white shadow-md scale-105')
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    }`}
-                >
-                  <LineSvg />
-                </button>
-                {hoveredTool === 'line-unified' && <Tooltip label={label} />}
-              </>
-            )
-          })()}
-        </div>
-        {/* Undo — directly below eraser */}
+        {/* Undo */}
         <div className="relative mx-auto">
           <button
             onClick={onUndo}
