@@ -164,6 +164,7 @@ export default function Toolbar({
               <button
                 key={s}
                 title={`${s}px`}
+                onMouseDown={e => e.preventDefault()}
                 onClick={() => onFontSizeChange(s)}
                 className={`w-9 h-7 rounded text-xs font-bold transition-all
                   ${fontSize === s ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}

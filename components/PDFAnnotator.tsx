@@ -404,27 +404,38 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     })
   }
 
+  const textSubmittingRef = useRef(false)
+
   function handleTextSubmit() {
-    if (!textInput) return
+    if (!textInput || textSubmittingRef.current) return
+    textSubmittingRef.current = true
     const pageNum = textInput.page
-    if (!textValue.trim()) { setTextInput(null); setEditingTextId(null); return }
-    setAnnotations(prev => {
-      const next = new Map(prev)
-      const page = prev.get(pageNum) ?? { strokes: [], texts: [] }
-      const hist = history.current.get(pageNum) ?? []
-      history.current.set(pageNum, [...hist, page])
-      let updatedTexts: TextAnnotation[]
-      if (editingTextId) {
-        updatedTexts = page.texts.map(t => t.id === editingTextId ? { ...t, text: textValue, fontSize, color } : t)
-        if (!updatedTexts.some(t => t.id === editingTextId)) updatedTexts = [...page.texts, { id: editingTextId, x: textInput.x, y: textInput.y, text: textValue, fontSize, color }]
-      } else {
-        updatedTexts = [...page.texts, { id: uuidv4(), x: textInput.x, y: textInput.y, text: textValue, fontSize, color }]
-      }
-      const updated: PageAnnotations = { ...page, texts: updatedTexts }
-      next.set(pageNum, updated); scheduleSave(pageNum, updated)
-      return next
-    })
+    const capturedText = textValue
+    const capturedFontSize = fontSize
+    const capturedColor = color
+    const capturedEditingId = editingTextId
     setTextInput(null); setTextValue(''); setEditingTextId(null)
+    setTimeout(() => { textSubmittingRef.current = false }, 100)
+    if (!capturedText.trim()) return
+    const prevPage = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
+    const hist = history.current.get(pageNum) ?? []
+    history.current.set(pageNum, [...hist, prevPage])
+    let updatedTexts: TextAnnotation[]
+    if (capturedEditingId) {
+      updatedTexts = prevPage.texts.map(t => t.id === capturedEditingId ? { ...t, text: capturedText, fontSize: capturedFontSize, color: capturedColor } : t)
+      if (!updatedTexts.some(t => t.id === capturedEditingId)) updatedTexts = [...prevPage.texts, { id: capturedEditingId, x: textInput.x, y: textInput.y, text: capturedText, fontSize: capturedFontSize, color: capturedColor }]
+    } else {
+      updatedTexts = [...prevPage.texts, { id: uuidv4(), x: textInput.x, y: textInput.y, text: capturedText, fontSize: capturedFontSize, color: capturedColor }]
+    }
+    const updated: PageAnnotations = { ...prevPage, texts: updatedTexts }
+    setAnnotations(prev => { const next = new Map(prev); next.set(pageNum, updated); return next })
+    scheduleSave(pageNum, updated)
+    // Immediately redraw annotation canvas so text appears without waiting for a re-render
+    const annotCanvas = annotCanvasRefs.current[pageNum - 1]
+    if (annotCanvas) {
+      const dpr = dprRef.current
+      redrawAnnotations(annotCanvas, updated, scaleRef.current * dpr, dpr)
+    }
   }
 
   function scheduleSave(pageNum: number, data: PageAnnotations) {
