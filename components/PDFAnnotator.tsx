@@ -966,7 +966,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
                       value={textValue}
                       onChange={e => setTextValue(e.target.value)}
                       onKeyDown={e => {
-                        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleTextSubmit() }
+                        if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); handleTextSubmit() }
                         if (e.key === 'Escape') {
                           editingTextIdRef.current = null
                           setTextInput(null); setTextValue(''); setEditingTextId(null)
