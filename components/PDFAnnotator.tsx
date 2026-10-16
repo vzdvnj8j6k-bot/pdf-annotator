@@ -671,6 +671,14 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   // Keep ref up-to-date so document listener always calls fresh version
   useEffect(() => { handleTextSubmitRef.current = handleTextSubmit })
 
+  // Auto-resize textarea height to content when no fixed height is set
+  useEffect(() => {
+    const el = textInputRef.current
+    if (!el || textBoxHeight !== undefined) return
+    el.style.height = 'auto'
+    el.style.height = el.scrollHeight + 'px'
+  }, [textInput, textBoxHeight])
+
   // Submit when clicking outside the textarea
   useEffect(() => {
     if (!textInput) return
@@ -979,7 +987,14 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
                     <textarea
                       ref={textInputRef}
                       value={textValue}
-                      onChange={e => setTextValue(e.target.value)}
+                      rows={1}
+                      onChange={e => {
+                        setTextValue(e.target.value)
+                        if (textBoxHeight === undefined) {
+                          e.target.style.height = 'auto'
+                          e.target.style.height = e.target.scrollHeight + 'px'
+                        }
+                      }}
                       onKeyDown={e => {
                         if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); handleTextSubmit() }
                         if (e.key === 'Escape') {
@@ -1000,8 +1015,8 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
                         left: (textInput.x - TBP) * scale,
                         top: (textInput.y - fontSize - TBP) * scale,
                         width: textBoxWidth * scale,
-                        height: textBoxHeight !== undefined ? textBoxHeight * scale : undefined,
-                        minHeight: textBoxHeight === undefined ? (fontSize + TBP * 2) * scale : undefined,
+                        height: textBoxHeight !== undefined ? textBoxHeight * scale : 'auto',
+                        minHeight: (fontSize * 1.3 + TBP * 2) * scale,
                         overflowY: textBoxHeight !== undefined ? 'auto' : 'hidden',
                         color, fontSize: fontSize * scale,
                         padding: `${TBP * scale}px`,
