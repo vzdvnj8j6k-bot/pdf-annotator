@@ -80,6 +80,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   // Per-page canvas refs
   const pageCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([])
   const annotCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([])
+  const textLayerRefs = useRef<(HTMLDivElement | null)[]>([])
   const pageContainerRefs = useRef<(HTMLDivElement | null)[]>([])
   const renderTasksRef = useRef<(import('pdfjs-dist').RenderTask | null)[]>([])
   const renderedPagesRef = useRef<Set<number>>(new Set())
@@ -117,6 +118,21 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   const scaleRef = useRef(scale)
   const clientId = useRef(uuidv4())
   const channelRef = useRef<RealtimeChannel | null>(null)
+
+  useEffect(() => {
+    const id = 'pdf-text-layer-styles'
+    if (!document.getElementById(id)) {
+      const style = document.createElement('style')
+      style.id = id
+      style.textContent = [
+        '.pdf-text-layer{position:absolute;top:0;left:0;overflow:hidden;user-select:text;}',
+        '.pdf-text-layer span,.pdf-text-layer br{color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0% 0%;}',
+        '.pdf-text-layer ::selection{background:rgba(0,0,255,0.25);color:transparent;}',
+        '.pdf-text-layer a{position:absolute;display:block;cursor:pointer;}',
+      ].join('')
+      document.head.appendChild(style)
+    }
+  }, [])
 
   useEffect(() => {
     async function loadPdf() {
@@ -189,6 +205,54 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       const pa = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
       redrawAnnotations(annotCanvas, pa, scaleRef.current * dpr, dpr)
       renderedPagesRef.current.add(pageNum)
+
+      // Text selection + link layer
+      const textLayerDiv = textLayerRefs.current[idx]
+      if (textLayerDiv && pdfjsLib) {
+        textLayerDiv.innerHTML = ''
+        textLayerDiv.style.width = cssW + 'px'
+        textLayerDiv.style.height = cssH + 'px'
+        const cssVp = page.getViewport({ scale: scaleRef.current })
+        // Text selection
+        try {
+          const textContent = await page.getTextContent()
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const rl = (pdfjsLib as any).renderTextLayer
+          if (rl) {
+            const task = rl({ textContentSource: textContent, container: textLayerDiv, viewport: cssVp })
+            await (task.promise ?? task)
+          }
+        } catch { /* text layer optional */ }
+        // Clickable links
+        try {
+          const pdfAnns = await page.getAnnotations()
+          for (const ann of pdfAnns) {
+            if (ann.subtype !== 'Link') continue
+            const [x1, y1, x2, y2] = cssVp.convertToViewportRectangle(ann.rect)
+            const x = Math.min(x1, x2), y = Math.min(y1, y2)
+            const w = Math.abs(x2 - x1), h = Math.abs(y2 - y1)
+            const a = document.createElement('a')
+            if (ann.url) {
+              a.href = ann.url; a.target = '_blank'; a.rel = 'noopener noreferrer'
+            } else if (ann.dest) {
+              a.href = '#'
+              const dest = ann.dest
+              a.addEventListener('click', async (ev) => {
+                ev.preventDefault()
+                try {
+                  const resolved = typeof dest === 'string' ? await pdf!.getDestination(dest) : dest
+                  if (Array.isArray(resolved)) {
+                    const pageIdx = await pdf!.getPageIndex(resolved[0])
+                    scrollToPage(pageIdx + 1)
+                  }
+                } catch { /* ignore */ }
+              })
+            } else continue
+            a.style.cssText = `position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;`
+            textLayerDiv.appendChild(a)
+          }
+        } catch { /* link layer optional */ }
+      }
     } catch (e: unknown) {
       if (e instanceof Error && e.name !== 'RenderingCancelledException') console.error('Render error:', e)
     }
@@ -861,6 +925,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
                   style={{ display: 'inline-block' }}
                 >
                   <canvas ref={el => { pageCanvasRefs.current[p-1] = el }} className="block" />
+                  <div ref={el => { textLayerRefs.current[p-1] = el }} className="pdf-text-layer" />
                   <canvas
                     ref={el => { annotCanvasRefs.current[p-1] = el }}
                     className="absolute top-0 left-0"
