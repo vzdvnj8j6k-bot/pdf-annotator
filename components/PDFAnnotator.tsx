@@ -444,18 +444,21 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     const hist = history.current.get(pageNum) ?? []
     history.current.set(pageNum, [...hist, page])
 
-    if (!capturedText.trim()) {
-      // Empty submit: restore original text on canvas (cancel edit)
-      const annotCanvas = annotCanvasRefs.current[pageNum - 1]
-      if (annotCanvas) {
-        const dpr = dprRef.current
-        redrawAnnotations(annotCanvas, page, scaleRef.current * dpr, dpr)
-      }
-      return
-    }
-
     let updatedTexts: TextAnnotation[]
-    if (capturedEditingId) {
+    if (!capturedText.trim()) {
+      if (capturedEditingId) {
+        // Empty submit while re-editing: delete the text annotation
+        updatedTexts = (page.texts ?? []).filter(t => t.id !== capturedEditingId)
+      } else {
+        // Empty new text: just cancel, restore canvas
+        const annotCanvas = annotCanvasRefs.current[pageNum - 1]
+        if (annotCanvas) {
+          const dpr = dprRef.current
+          redrawAnnotations(annotCanvas, page, scaleRef.current * dpr, dpr)
+        }
+        return
+      }
+    } else if (capturedEditingId) {
       updatedTexts = (page.texts ?? []).map(t => t.id === capturedEditingId ? { ...t, text: capturedText, fontSize: capturedFontSize, color: capturedColor } : t)
       if (!updatedTexts.some(t => t.id === capturedEditingId)) updatedTexts = [...(page.texts ?? []), { id: capturedEditingId, x: capturedX, y: capturedY, text: capturedText, fontSize: capturedFontSize, color: capturedColor }]
     } else {
