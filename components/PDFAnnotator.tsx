@@ -373,6 +373,10 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     } else {
       redrawAnnotations(annotCanvas, pa, physScale, dpr)
       drawStroke(ctx, currentStroke.current, physScale, studyMode, dpr)
+      // Redraw texts on top so in-progress strokes never visually cover them
+      for (const text of pa.texts ?? []) {
+        ctx.save(); ctx.font = `${text.fontSize*physScale}px sans-serif`; ctx.fillStyle = text.color; ctx.fillText(text.text, text.x*physScale, text.y*physScale); ctx.restore()
+      }
     }
   }
 
