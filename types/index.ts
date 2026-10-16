@@ -22,7 +22,8 @@ export interface TextAnnotation {
   text: string
   fontSize: number
   color: string
-  width?: number  // box width in page units; defaults to DEFAULT_TEXT_BOX_WIDTH
+  width?: number   // box width in page units; defaults to DEFAULT_TEXT_BOX_WIDTH
+  height?: number  // box height in page units; undefined = auto from content
 }
 
 export interface EraserMark {

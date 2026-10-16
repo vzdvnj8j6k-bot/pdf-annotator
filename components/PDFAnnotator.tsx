@@ -70,6 +70,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   const [textValue, setTextValue] = useState('')
   const [editingTextId, setEditingTextId] = useState<string | null>(null)
   const [textBoxWidth, setTextBoxWidth] = useState(180)
+  const [textBoxHeight, setTextBoxHeight] = useState<number | undefined>(undefined)
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [onlineCount, setOnlineCount] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
@@ -108,8 +109,11 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     annotation: TextAnnotation
     pageNum: number
     startPointX: number
+    startPointY: number
     startWidth: number
+    startHeight: number
     currentWidth: number
+    currentHeight: number
   } | null>(null)
   const history = useRef<Map<number, PageAnnotations[]>>(new Map())
   const saveTimer = useRef<NodeJS.Timeout | null>(null)
@@ -372,7 +376,8 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
         }
         lines.push(cur)
       }
-      const boxH = lines.length * lh + pad * 2
+      const autoH = lines.length * lh + pad * 2
+      const boxH = text.height !== undefined ? text.height * drawScale : autoH
       const bx = text.x * drawScale - pad
       const by = text.y * drawScale - fs - pad
       // Box border and resize handle only in text tool mode
@@ -383,6 +388,8 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
         ctx.fillStyle = 'rgba(80,100,240,0.75)'
         ctx.fillRect(bx + boxW - hs, by + boxH - hs, hs, hs)
       }
+      // Clip text to box bounds
+      ctx.beginPath(); ctx.rect(bx, by, boxW, boxH); ctx.clip()
       // Text
       ctx.fillStyle = text.color
       for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], bx + pad, by + pad + fs + i * lh)
@@ -411,7 +418,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   function getTextBoxBounds(text: TextAnnotation) {
     const w = text.width ?? TBW_DEFAULT
     const linesApprox = Math.max(1, text.text.split('\n').length)
-    const h = linesApprox * text.fontSize * 1.3 + TBP * 2
+    const h = text.height ?? (linesApprox * text.fontSize * 1.3 + TBP * 2)
     return { x: text.x - TBP, y: text.y - text.fontSize - TBP, w, h }
   }
   function isOnResizeHandle(pt: Point, text: TextAnnotation) {
@@ -443,8 +450,13 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
         editingTextIdRef.current = hitResize.id
         isDrawing.current = true
         drawingPage.current = pageNum
-        const w = hitResize.width ?? TBW_DEFAULT
-        resizingTextRef.current = { annotation: hitResize, pageNum, startPointX: point.x, startWidth: w, currentWidth: w }
+        const b = getTextBoxBounds(hitResize)
+        resizingTextRef.current = {
+          annotation: hitResize, pageNum,
+          startPointX: point.x, startPointY: point.y,
+          startWidth: b.w, startHeight: b.h,
+          currentWidth: b.w, currentHeight: b.h,
+        }
         return
       }
       const hit = pa.texts.find(t => isInTextBox(point, t))
@@ -460,7 +472,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       } else {
         editingTextIdRef.current = null
         setEditingTextId(null); setTextInput({ ...point, page: pageNum }); setTextValue('')
-        setTextBoxWidth(TBW_DEFAULT)
+        setTextBoxWidth(TBW_DEFAULT); setTextBoxHeight(undefined)
         setTimeout(() => textInputRef.current?.focus(), 50)
       }
       return
@@ -490,10 +502,14 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       const resize = resizingTextRef.current
       const point = getPoint(e)
       const dx = point.x - resize.startPointX
+      const dy = point.y - resize.startPointY
+      const minH = resize.annotation.fontSize * 1.3 + TBP * 2
       const newWidth = Math.max(80, resize.startWidth + dx)
+      const newHeight = Math.max(minH, resize.startHeight + dy)
       resize.currentWidth = newWidth
+      resize.currentHeight = newHeight
       const pa = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
-      const previewTexts = pa.texts.map(t => t.id === resize.annotation.id ? { ...t, width: newWidth } : t)
+      const previewTexts = pa.texts.map(t => t.id === resize.annotation.id ? { ...t, width: newWidth, height: newHeight } : t)
       redrawAnnotations(annotCanvas, { ...pa, texts: previewTexts }, physScale, dpr)
       return
     }
@@ -574,7 +590,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       const pg = annotationsRef.current.get(resize.pageNum) ?? { strokes: [], texts: [] }
       const hist = history.current.get(resize.pageNum) ?? []
       history.current.set(resize.pageNum, [...hist, pg])
-      const updatedTexts = pg.texts.map(t => t.id === resize.annotation.id ? { ...t, width: resize.currentWidth } : t)
+      const updatedTexts = pg.texts.map(t => t.id === resize.annotation.id ? { ...t, width: resize.currentWidth, height: resize.currentHeight } : t)
       const updated: PageAnnotations = { ...pg, texts: updatedTexts }
       const nextAnnotations = new Map(annotationsRef.current)
       nextAnnotations.set(resize.pageNum, updated)
@@ -613,7 +629,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
         // No move = click to edit
         const hit = drag.annotation
         setEditingTextId(hit.id); setTextInput({ x: hit.x, y: hit.y, page: drag.pageNum }); setTextValue(hit.text); setFontSize(hit.fontSize)
-        setTextBoxWidth(hit.width ?? TBW_DEFAULT)
+        setTextBoxWidth(hit.width ?? TBW_DEFAULT); setTextBoxHeight(hit.height)
         setTimeout(() => textInputRef.current?.focus(), 50)
       }
       return
@@ -659,6 +675,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     const capturedFontSize = fontSize
     const capturedColor = color
     const capturedWidth = textBoxWidth
+    const capturedHeight = textBoxHeight
     const capturedEditingId = editingTextId
     const capturedX = textInput.x
     const capturedY = textInput.y
@@ -686,10 +703,10 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
         return
       }
     } else if (capturedEditingId) {
-      updatedTexts = (page.texts ?? []).map(t => t.id === capturedEditingId ? { ...t, text: capturedText, fontSize: capturedFontSize, color: capturedColor, width: capturedWidth } : t)
-      if (!updatedTexts.some(t => t.id === capturedEditingId)) updatedTexts = [...(page.texts ?? []), { id: capturedEditingId, x: capturedX, y: capturedY, text: capturedText, fontSize: capturedFontSize, color: capturedColor, width: capturedWidth }]
+      updatedTexts = (page.texts ?? []).map(t => t.id === capturedEditingId ? { ...t, text: capturedText, fontSize: capturedFontSize, color: capturedColor, width: capturedWidth, height: capturedHeight } : t)
+      if (!updatedTexts.some(t => t.id === capturedEditingId)) updatedTexts = [...(page.texts ?? []), { id: capturedEditingId, x: capturedX, y: capturedY, text: capturedText, fontSize: capturedFontSize, color: capturedColor, width: capturedWidth, height: capturedHeight }]
     } else {
-      updatedTexts = [...(page.texts ?? []), { id: uuidv4(), x: capturedX, y: capturedY, text: capturedText, fontSize: capturedFontSize, color: capturedColor, width: capturedWidth }]
+      updatedTexts = [...(page.texts ?? []), { id: uuidv4(), x: capturedX, y: capturedY, text: capturedText, fontSize: capturedFontSize, color: capturedColor, width: capturedWidth, height: capturedHeight }]
     }
     const updated: PageAnnotations = { ...page, texts: updatedTexts }
     const nextAnnotations = new Map(annotationsRef.current)
@@ -968,7 +985,9 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
                         left: (textInput.x - TBP) * scale,
                         top: (textInput.y - fontSize - TBP) * scale,
                         width: textBoxWidth * scale,
-                        minHeight: (fontSize + TBP * 2) * scale,
+                        height: textBoxHeight !== undefined ? textBoxHeight * scale : undefined,
+                        minHeight: textBoxHeight === undefined ? (fontSize + TBP * 2) * scale : undefined,
+                        overflowY: textBoxHeight !== undefined ? 'auto' : 'hidden',
                         color, fontSize: fontSize * scale,
                         padding: `${TBP * scale}px`,
                         border: '1.5px dashed rgba(80,100,240,0.6)',
