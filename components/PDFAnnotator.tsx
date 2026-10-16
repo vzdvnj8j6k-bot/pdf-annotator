@@ -93,6 +93,13 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   const isDrawing = useRef(false)
   const currentStroke = useRef<Stroke | null>(null)
   const drawingPage = useRef(1)
+  const draggingTextRef = useRef<{
+    annotation: TextAnnotation
+    pageNum: number
+    startPoint: Point
+    currentPoint: Point
+    hasMoved: boolean
+  } | null>(null)
   const history = useRef<Map<number, PageAnnotations[]>>(new Map())
   const saveTimer = useRef<NodeJS.Timeout | null>(null)
   const pinchStartDist = useRef<number | null>(null)
@@ -308,19 +315,20 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       const pa = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
       const hit = pa.texts.find(t => Math.abs(t.x - point.x) < 200 && Math.abs(t.y - point.y) < t.fontSize * 1.5)
       if (hit) {
-        // Sync editingTextIdRef BEFORE redraw so redrawAnnotations skips this text immediately
+        // Enter drag-wait state: pointerMove will decide if this is a drag or click-to-edit
         editingTextIdRef.current = hit.id
-        setEditingTextId(hit.id); setTextInput({ x: hit.x, y: hit.y, page: pageNum }); setTextValue(hit.text); setFontSize(hit.fontSize)
-        // Redraw canvas skipping the hit text (it will live in the input while being edited)
-        // Do NOT modify annotationsRef — text stays in ref for correct history/submit
+        isDrawing.current = true
+        drawingPage.current = pageNum
+        draggingTextRef.current = { annotation: hit, pageNum, startPoint: point, currentPoint: point, hasMoved: false }
+        // Hide text on canvas; it will be redrawn live during drag
         const curPage = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
         const annotCanvas = annotCanvasRefs.current[pageNum - 1]
         if (annotCanvas) redrawAnnotations(annotCanvas, curPage, scaleRef.current * dprRef.current, dprRef.current, hit.id)
       } else {
         editingTextIdRef.current = null
         setEditingTextId(null); setTextInput({ ...point, page: pageNum }); setTextValue('')
+        setTimeout(() => textInputRef.current?.focus(), 50)
       }
-      setTimeout(() => textInputRef.current?.focus(), 50)
       return
     }
     isDrawing.current = true
@@ -343,6 +351,25 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     if (!annotCanvas) return
     const dpr = dprRef.current
     const physScale = scaleRef.current * dpr
+    // Text drag handling
+    if (draggingTextRef.current && draggingTextRef.current.pageNum === pageNum) {
+      const drag = draggingTextRef.current
+      const point = getPoint(e)
+      drag.currentPoint = point
+      const dx = point.x - drag.startPoint.x
+      const dy = point.y - drag.startPoint.y
+      if (!drag.hasMoved && Math.sqrt(dx*dx + dy*dy) > 5) drag.hasMoved = true
+      if (drag.hasMoved) {
+        const newX = drag.annotation.x + dx
+        const newY = drag.annotation.y + dy
+        const pa = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
+        redrawAnnotations(annotCanvas, pa, physScale, dpr, drag.annotation.id)
+        const ctx = annotCanvas.getContext('2d')!
+        ctx.save(); ctx.font = `${drag.annotation.fontSize * physScale}px sans-serif`; ctx.fillStyle = drag.annotation.color
+        ctx.fillText(drag.annotation.text, newX * physScale, newY * physScale); ctx.restore()
+      }
+      return
+    }
     if (!isDrawing.current) {
       if (tool === 'eraser') {
         const point = getPoint(e)
@@ -392,6 +419,38 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   }
 
   function handlePointerUp(pageNum: number) {
+    // Text drag completion
+    if (draggingTextRef.current) {
+      const drag = draggingTextRef.current
+      draggingTextRef.current = null
+      isDrawing.current = false
+      if (drag.hasMoved) {
+        // Save new position
+        editingTextIdRef.current = null
+        const dx = drag.currentPoint.x - drag.startPoint.x
+        const dy = drag.currentPoint.y - drag.startPoint.y
+        const newX = drag.annotation.x + dx
+        const newY = drag.annotation.y + dy
+        const pg = annotationsRef.current.get(drag.pageNum) ?? { strokes: [], texts: [] }
+        const hist = history.current.get(drag.pageNum) ?? []
+        history.current.set(drag.pageNum, [...hist, pg])
+        const updatedTexts = pg.texts.map(t => t.id === drag.annotation.id ? { ...t, x: newX, y: newY } : t)
+        const updated: PageAnnotations = { ...pg, texts: updatedTexts }
+        const nextAnnotations = new Map(annotationsRef.current)
+        nextAnnotations.set(drag.pageNum, updated)
+        annotationsRef.current = nextAnnotations
+        setAnnotations(nextAnnotations)
+        scheduleSave(drag.pageNum, updated)
+        const canvas = annotCanvasRefs.current[drag.pageNum - 1]
+        if (canvas) redrawAnnotations(canvas, updated, scaleRef.current * dprRef.current, dprRef.current)
+      } else {
+        // No move = click to edit
+        const hit = drag.annotation
+        setEditingTextId(hit.id); setTextInput({ x: hit.x, y: hit.y, page: drag.pageNum }); setTextValue(hit.text); setFontSize(hit.fontSize)
+        setTimeout(() => textInputRef.current?.focus(), 50)
+      }
+      return
+    }
     if (!isDrawing.current || !currentStroke.current) return
     isDrawing.current = false
     const stroke = currentStroke.current; currentStroke.current = null
