@@ -42,7 +42,6 @@ const LineSvg = () => (
 const TOOLS: { id: Tool; label: string; icon: React.ReactNode }[] = [
   { id: 'pen', label: 'ペン', icon: '✏️' },
   { id: 'highlighter', label: 'マーカー', icon: '🖊️' },
-  { id: 'line', label: '直線', icon: <LineSvg /> },
   { id: 'text', label: 'テキスト', icon: 'T' },
   { id: 'eraser', label: '消しゴム', icon: '◻' },
 ]
@@ -79,6 +78,39 @@ export default function Toolbar({
             )}
           </div>
         ))}
+        {/* Straight line button — switches to line or highlighter-line based on current tool */}
+        <div className="relative mx-auto">
+          {(() => {
+            const isLineTool = tool === 'line' || tool === 'highlighter-line'
+            const isHlLine = tool === 'highlighter-line'
+            const label = isLineTool
+              ? `直線（${isHlLine ? 'マーカー' : 'ペン'}）解除`
+              : tool === 'highlighter' ? 'マーカー直線' : 'ペン直線'
+            function handleLineClick() {
+              if (isLineTool) { onToolChange('none') }
+              else if (tool === 'highlighter') { onToolChange('highlighter-line') }
+              else { onToolChange('line') }
+              setHoveredTool(null)
+            }
+            return (
+              <>
+                <button
+                  onClick={handleLineClick}
+                  onMouseEnter={() => setHoveredTool('line-unified')}
+                  onMouseLeave={() => setHoveredTool(null)}
+                  className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold transition-all
+                    ${isLineTool
+                      ? (isHlLine ? 'bg-yellow-400 text-white shadow-md scale-105' : 'bg-blue-600 text-white shadow-md scale-105')
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                >
+                  <LineSvg />
+                </button>
+                {hoveredTool === 'line-unified' && <Tooltip label={label} />}
+              </>
+            )
+          })()}
+        </div>
         {/* Undo — directly below eraser */}
         <div className="relative mx-auto">
           <button

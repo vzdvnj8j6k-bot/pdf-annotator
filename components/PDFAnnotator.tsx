@@ -277,7 +277,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke, drawScale: number, forceStudyMode: boolean, lineWidthScale: number) {
     if (stroke.points.length < 2) return
     ctx.save()
-    const isHighlighter = stroke.tool === 'highlighter'
+    const isHighlighter = stroke.tool === 'highlighter' || stroke.tool === 'highlighter-line'
     const maskMode = isHighlighter && forceStudyMode
     ctx.globalAlpha = maskMode ? 1 : stroke.opacity
     ctx.strokeStyle = maskMode ? stroke.color.slice(0, 7) : stroke.color
@@ -315,9 +315,9 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     isDrawing.current = true
     currentStroke.current = {
       id: uuidv4(), tool,
-      color: tool === 'highlighter' ? color + '80' : color,
-      size: tool === 'highlighter' ? brushSize*5 : tool === 'eraser' ? brushSize*4 : tool === 'line' ? brushSize*1.5 : brushSize,
-      opacity: tool === 'highlighter' ? 0.4 : 1,
+      color: (tool === 'highlighter' || tool === 'highlighter-line') ? color + '80' : color,
+      size: (tool === 'highlighter' || tool === 'highlighter-line') ? brushSize*5 : tool === 'eraser' ? brushSize*4 : (tool === 'line') ? brushSize*1.5 : brushSize,
+      opacity: (tool === 'highlighter' || tool === 'highlighter-line') ? 0.4 : 1,
       points: [point],
     }
     if (tool === 'eraser') {
@@ -387,7 +387,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       return
     }
     if (stroke.points.length < 2) return
-    if (tool === 'line') stroke.points = [stroke.points[0], stroke.points[stroke.points.length - 1]]
+    if (tool === 'line' || tool === 'highlighter-line') stroke.points = [stroke.points[0], stroke.points[stroke.points.length - 1]]
     setAnnotations(prev => {
       const next = new Map(prev)
       const page = next.get(pageNum) ?? { strokes: [], texts: [] }
@@ -503,7 +503,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
 
   const canvasStyle = tool === 'none'
     ? { cursor: 'grab', touchAction: 'auto', pointerEvents: 'none' as const }
-    : { cursor: tool==='pen'||tool==='highlighter'||tool==='line' ? 'crosshair' : tool==='eraser' ? 'none' : 'text', touchAction: 'none' as const }
+    : { cursor: tool==='pen'||tool==='highlighter'||tool==='line'||tool==='highlighter-line' ? 'crosshair' : tool==='eraser' ? 'none' : 'text', touchAction: 'none' as const }
 
   return (
     <div className="flex h-full w-full overflow-hidden">
