@@ -85,6 +85,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   // Keep annotations in a ref so canvas ops can always access latest
   const annotationsRef = useRef(annotations)
   useEffect(() => { annotationsRef.current = annotations }, [annotations])
+  const editingTextIdRef = useRef<string | null>(null)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const dprRef = useRef(1)
@@ -247,7 +248,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     if (el) el.scrollIntoView({ behavior: smooth ? 'smooth' : 'instant', block: 'start' })
   }
 
-  function redrawAnnotations(canvas: HTMLCanvasElement, pageAnnotations: PageAnnotations, drawScale: number, lineWidthScale: number) {
+  function redrawAnnotations(canvas: HTMLCanvasElement, pageAnnotations: PageAnnotations, drawScale: number, lineWidthScale: number, skipTextId?: string | null) {
     const ctx = canvas.getContext('2d')!
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     type Op = { type: 'stroke'; data: Stroke } | { type: 'erase'; data: EraserMark }
@@ -270,6 +271,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       }
     }
     for (const text of pageAnnotations.texts) {
+      if (skipTextId && text.id === skipTextId) continue
       ctx.save(); ctx.font = `${text.fontSize*drawScale}px sans-serif`; ctx.fillStyle = text.color; ctx.fillText(text.text, text.x*drawScale, text.y*drawScale); ctx.restore()
     }
   }
@@ -306,9 +308,18 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       const pa = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
       const hit = pa.texts.find(t => Math.abs(t.x - point.x) < 200 && Math.abs(t.y - point.y) < t.fontSize * 1.5)
       if (hit) {
+        // Sync editingTextIdRef BEFORE redraw so redrawAnnotations skips this text immediately
+        editingTextIdRef.current = hit.id
         setEditingTextId(hit.id); setTextInput({ x: hit.x, y: hit.y, page: pageNum }); setTextValue(hit.text); setFontSize(hit.fontSize)
-        setAnnotations(prev => { const next = new Map(prev); const page = prev.get(pageNum) ?? { strokes: [], texts: [] }; next.set(pageNum, { ...page, texts: page.texts.filter(t => t.id !== hit.id) }); return next })
-      } else { setEditingTextId(null); setTextInput({ ...point, page: pageNum }); setTextValue('') }
+        // Redraw canvas skipping the hit text (it will live in the input while being edited)
+        // Do NOT modify annotationsRef — text stays in ref for correct history/submit
+        const curPage = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
+        const annotCanvas = annotCanvasRefs.current[pageNum - 1]
+        if (annotCanvas) redrawAnnotations(annotCanvas, curPage, scaleRef.current * dprRef.current, dprRef.current, hit.id)
+      } else {
+        editingTextIdRef.current = null
+        setEditingTextId(null); setTextInput({ ...point, page: pageNum }); setTextValue('')
+      }
       setTimeout(() => textInputRef.current?.focus(), 50)
       return
     }
@@ -424,15 +435,25 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     const capturedEditingId = editingTextId
     const capturedX = textInput.x
     const capturedY = textInput.y
+    // Clear editing ref sync BEFORE any redraw so subsequent redraws show all texts
+    editingTextIdRef.current = null
     setTextInput(null); setTextValue(''); setEditingTextId(null)
     setTimeout(() => { textSubmittingRef.current = false }, 100)
-    if (!capturedText.trim()) return
 
-    // Compute updated annotations synchronously so annotationsRef is available
-    // immediately for hit detection on the next click
     const page = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
     const hist = history.current.get(pageNum) ?? []
     history.current.set(pageNum, [...hist, page])
+
+    if (!capturedText.trim()) {
+      // Empty submit: restore original text on canvas (cancel edit)
+      const annotCanvas = annotCanvasRefs.current[pageNum - 1]
+      if (annotCanvas) {
+        const dpr = dprRef.current
+        redrawAnnotations(annotCanvas, page, scaleRef.current * dpr, dpr)
+      }
+      return
+    }
+
     let updatedTexts: TextAnnotation[]
     if (capturedEditingId) {
       updatedTexts = (page.texts ?? []).map(t => t.id === capturedEditingId ? { ...t, text: capturedText, fontSize: capturedFontSize, color: capturedColor } : t)
@@ -441,7 +462,6 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       updatedTexts = [...(page.texts ?? []), { id: uuidv4(), x: capturedX, y: capturedY, text: capturedText, fontSize: capturedFontSize, color: capturedColor }]
     }
     const updated: PageAnnotations = { ...page, texts: updatedTexts }
-    // Sync ref immediately before any subsequent event can fire
     const nextAnnotations = new Map(annotationsRef.current)
     nextAnnotations.set(pageNum, updated)
     annotationsRef.current = nextAnnotations
@@ -688,7 +708,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
                       const canvas = annotCanvasRefs.current[p-1]
                       if (canvas && !isDrawing.current) {
                         const dpr = dprRef.current
-                        redrawAnnotations(canvas, annotationsRef.current.get(p) ?? { strokes: [], texts: [] }, scaleRef.current*dpr, dpr)
+                        redrawAnnotations(canvas, annotationsRef.current.get(p) ?? { strokes: [], texts: [] }, scaleRef.current*dpr, dpr, editingTextIdRef.current)
                       }
                     }}
                   />
@@ -699,7 +719,17 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
                       onChange={e => setTextValue(e.target.value)}
                       onKeyDown={e => {
                         if (e.key === 'Enter') handleTextSubmit()
-                        if (e.key === 'Escape') { setTextInput(null); setTextValue('') }
+                        if (e.key === 'Escape') {
+                          editingTextIdRef.current = null
+                          setTextInput(null); setTextValue(''); setEditingTextId(null)
+                          if (textInput) {
+                            const canvas = annotCanvasRefs.current[textInput.page - 1]
+                            if (canvas) {
+                              const dpr = dprRef.current
+                              redrawAnnotations(canvas, annotationsRef.current.get(textInput.page) ?? { strokes: [], texts: [] }, scaleRef.current * dpr, dpr)
+                            }
+                          }
+                        }
                       }}
                       onBlur={handleTextSubmit}
                       className="absolute bg-transparent border-b border-blue-400 outline-none"
