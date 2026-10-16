@@ -12,6 +12,7 @@ export interface Stroke {
   size: number
   opacity: number
   points: Point[]
+  seq?: number
 }
 
 export interface TextAnnotation {
@@ -27,6 +28,7 @@ export interface EraserMark {
   id: string
   points: Point[]
   r: number  // radius in page units (scale-independent)
+  seq?: number
 }
 
 export interface PageAnnotations {

@@ -184,27 +184,25 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     const ctx = canvas.getContext('2d')!
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-    for (const stroke of pageAnnotations.strokes) {
-      if (stroke.points.length < 2) continue
-      drawStroke(ctx, stroke, drawScale, studyMode, lineWidthScale)
-    }
+    // Interleave strokes and eraser marks in creation order (seq).
+    // Old data without seq: strokes default to 0 (drawn first), eraser marks to MAX (applied last).
+    type Op = { type: 'stroke'; data: Stroke } | { type: 'erase'; data: EraserMark }
+    const ops: (Op & { seq: number })[] = [
+      ...pageAnnotations.strokes.map(s => ({ type: 'stroke' as const, data: s, seq: s.seq ?? 0 })),
+      ...(pageAnnotations.eraserMarks ?? []).map(m => ({ type: 'erase' as const, data: m, seq: m.seq ?? Number.MAX_SAFE_INTEGER })),
+    ]
+    ops.sort((a, b) => a.seq - b.seq)
 
-    for (const text of pageAnnotations.texts) {
-      ctx.save()
-      ctx.font = `${text.fontSize * drawScale}px sans-serif`
-      ctx.fillStyle = text.color
-      ctx.fillText(text.text, text.x * drawScale, text.y * drawScale)
-      ctx.restore()
-    }
-
-    // Apply eraser marks (pixel-level erasure via destination-out)
-    if (pageAnnotations.eraserMarks?.length) {
-      ctx.save()
-      ctx.globalCompositeOperation = 'destination-out'
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
-      for (const mark of pageAnnotations.eraserMarks) {
+    for (const op of ops) {
+      if (op.type === 'stroke') {
+        if (op.data.points.length >= 2) drawStroke(ctx, op.data, drawScale, studyMode, lineWidthScale)
+      } else {
+        const mark = op.data
         if (mark.points.length === 0) continue
+        ctx.save()
+        ctx.globalCompositeOperation = 'destination-out'
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
         ctx.lineWidth = mark.r * 2 * drawScale
         ctx.beginPath()
         if (mark.points.length === 1) {
@@ -217,7 +215,15 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
           }
           ctx.stroke()
         }
+        ctx.restore()
       }
+    }
+
+    for (const text of pageAnnotations.texts) {
+      ctx.save()
+      ctx.font = `${text.fontSize * drawScale}px sans-serif`
+      ctx.fillStyle = text.color
+      ctx.fillText(text.text, text.x * drawScale, text.y * drawScale)
       ctx.restore()
     }
   }
@@ -401,7 +407,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       const page = annotations.get(currentPage) ?? { strokes: [], texts: [] }
       if (stroke.points.length > 0) {
         const r = stroke.size / scale  // normalize radius to page units
-        const mark: EraserMark = { id: uuidv4(), points: stroke.points, r }
+        const mark: EraserMark = { id: uuidv4(), points: stroke.points, r, seq: Date.now() }
         const updated: PageAnnotations = {
           ...page,
           eraserMarks: [...(page.eraserMarks ?? []), mark],
@@ -432,7 +438,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       const page = next.get(currentPage) ?? { strokes: [], texts: [] }
       const hist = history.current.get(currentPage) ?? []
       history.current.set(currentPage, [...hist, page])
-      const updated: PageAnnotations = { ...page, strokes: [...page.strokes, stroke] }
+      const updated: PageAnnotations = { ...page, strokes: [...page.strokes, { ...stroke, seq: Date.now() }] }
       next.set(currentPage, updated)
       scheduleSave(currentPage, updated)
       return next
@@ -665,7 +671,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
         cursor: tool === 'pen' || tool === 'highlighter' || tool === 'line'
           ? 'crosshair'
           : tool === 'eraser'
-          ? 'cell'
+          ? 'none'
           : 'text',
         touchAction: 'none' as const,
       }
@@ -774,6 +780,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
                 onPointerLeave={() => {
                   handlePointerUp()
                   // Also clear cursor when not drawing (hover leave)
