@@ -181,7 +181,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
 
   // IntersectionObserver: lazy load + track current page
   useEffect(() => {
-    if (totalPages === 0 || !containerRef.current) return
+    if (isLoading || totalPages === 0 || !containerRef.current) return
     const observer = new IntersectionObserver(
       entries => {
         let topEntry: IntersectionObserverEntry | null = null
@@ -204,7 +204,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       pageContainerRefs.current.forEach(el => el && observer.observe(el))
     }, 50)
     return () => { clearTimeout(tid); observer.disconnect() }
-  }, [totalPages])
+  }, [totalPages, isLoading])
 
   // Re-render on scale change
   useEffect(() => {
@@ -227,13 +227,13 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     })
   }, [studyMode])
 
-  // Render initial pages when PDF loads (fallback if IntersectionObserver misses them)
+  // Render initial pages once loading is done and canvases are in the DOM
   useEffect(() => {
-    if (!pdf || totalPages === 0) return
+    if (isLoading || !pdf || totalPages === 0) return
     const start = Math.max(1, initialPage - 1)
     const end = Math.min(totalPages, initialPage + 2)
     for (let p = start; p <= end; p++) renderPage(p)
-  }, [pdf]) // eslint-disable-line
+  }, [isLoading, pdf]) // eslint-disable-line
 
   // Scroll to initial page after load
   useEffect(() => {
