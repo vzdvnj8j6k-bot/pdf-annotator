@@ -10,6 +10,66 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 
 let pdfjsLib: typeof import('pdfjs-dist') | null = null
 
+// Pen cursor: pencil tilted ~45°, tip at bottom-left, hotspot at (1,19)
+const PEN_SVG = [
+  '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">',
+  // shadow
+  '<path d="M2,19 L4,20 L19,5 L17,3 Z" fill="black" opacity="0.15" transform="translate(1,1)"/>',
+  // body (yellow)
+  '<path d="M1,18 L3,20 L18,5 L16,3 Z" fill="#F5C842"/>',
+  // ferrule (silver)
+  '<path d="M16,3 L18,5 L20,3 L18,1 Z" fill="#C8C8C8"/>',
+  // eraser (pink)
+  '<path d="M15,2 L17,0 L19,2 L17,4 Z" fill="#FFB6C1"/>',
+  // wood tip
+  '<path d="M1,18 L3,20 L4,17 Z" fill="#D4A017"/>',
+  // graphite tip
+  '<path d="M0,20 L1,18 L3,20 Z" fill="#333"/>',
+  // outline
+  '<path d="M0,20 L1,18 L3,20 L18,5 L20,3 L17,0 L15,2 L16,3 L18,5" fill="none" stroke="#9A7D00" stroke-width="0.8" stroke-linejoin="round"/>',
+  '</svg>',
+].join('')
+const PEN_CURSOR = (typeof btoa !== 'undefined')
+  ? `url("data:image/svg+xml;base64,${btoa(PEN_SVG)}") 0 20, crosshair`
+  : 'crosshair'
+
+// Highlighter cursor: thick marker tilted ~45°, tip at bottom-left, hotspot at (1,18)
+const HIGHLIGHTER_SVG = [
+  '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">',
+  // shadow
+  '<path d="M2,21 L6,22 L21,7 L17,3 Z" fill="black" opacity="0.12" transform="translate(1,1)"/>',
+  // body (bright yellow)
+  '<path d="M1,20 L5,22 L20,7 L16,3 Z" fill="#FFE600"/>',
+  // cap end (darker yellow)
+  '<path d="M16,3 L20,7 L22,5 L18,1 Z" fill="#D4B400"/>',
+  // chisel tip (angled flat end)
+  '<path d="M1,20 L5,22 L6,18 L2,16 Z" fill="#D4B400"/>',
+  // shine stripe
+  '<line x1="4" y1="20" x2="19" y2="5" stroke="white" stroke-width="1.8" opacity="0.35"/>',
+  // outline
+  '<path d="M1,20 L5,22 L20,7 L16,3 L18,1 L22,5 L20,7" fill="none" stroke="#B09000" stroke-width="0.9" stroke-linejoin="round"/>',
+  '</svg>',
+].join('')
+const HIGHLIGHTER_CURSOR = (typeof btoa !== 'undefined')
+  ? `url("data:image/svg+xml;base64,${btoa(HIGHLIGHTER_SVG)}") 1 20, crosshair`
+  : 'crosshair'
+
+// Eraser cursor: pink rectangular eraser icon, hotspot at center (14,10)
+const ERASER_SVG = [
+  '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="20" viewBox="0 0 28 20">',
+  '<rect x="3" y="4" width="22" height="14" rx="3" fill="black" opacity="0.12"/>',
+  '<rect x="2" y="2" width="22" height="14" rx="3" fill="#FFD0DC"/>',
+  '<rect x="2" y="2" width="10" height="14" rx="3" fill="#FF8FA8"/>',
+  '<rect x="8" y="2" width="4" height="14" fill="#FF8FA8"/>',
+  '<line x1="12" y1="2" x2="12" y2="16" stroke="#C07890" stroke-width="1"/>',
+  '<line x1="4" y1="3.5" x2="23" y2="3.5" stroke="white" stroke-width="1" opacity="0.5"/>',
+  '<rect x="2" y="2" width="22" height="14" rx="3" fill="none" stroke="#C07890" stroke-width="1.5"/>',
+  '</svg>',
+].join('')
+const ERASER_CURSOR = (typeof btoa !== 'undefined')
+  ? `url("data:image/svg+xml;base64,${btoa(ERASER_SVG)}") 14 10, crosshair`
+  : 'crosshair'
+
 function PanelIcon({ open }: { open: boolean }) {
   return (
     <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -65,6 +125,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   const [brushSize, setBrushSize] = useState(3)
   const [annotations, setAnnotations] = useState<Map<number, PageAnnotations>>(initialAnnotations ?? new Map())
   const [studyMode, setStudyMode] = useState(false)
+  const [revealedStrokes, setRevealedStrokes] = useState<Set<string>>(new Set())
   const [fontSize, setFontSize] = useState(16)
   const [textInput, setTextInput] = useState<{ x: number; y: number; page: number } | null>(null)
   const [textValue, setTextValue] = useState('')
@@ -77,6 +138,8 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   const [toolbarOpen, setToolbarOpen] = useState(true)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [pageGridOpen, setPageGridOpen] = useState(false)
+  const [pageInputMode, setPageInputMode] = useState(false)
+  const [pageInputValue, setPageInputValue] = useState('')
 
   // Per-page canvas refs
   const pageCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([])
@@ -85,6 +148,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   const pageContainerRefs = useRef<(HTMLDivElement | null)[]>([])
   const renderTasksRef = useRef<(import('pdfjs-dist').RenderTask | null)[]>([])
   const renderedPagesRef = useRef<Set<number>>(new Set())
+  const visiblePagesRef = useRef<Set<number>>(new Set())
   // Keep annotations in a ref so canvas ops can always access latest
   const annotationsRef = useRef(annotations)
   useEffect(() => { annotationsRef.current = annotations }, [annotations])
@@ -95,6 +159,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   const textInputRef = useRef<HTMLTextAreaElement>(null)
   const toolRef = useRef(tool)
   useEffect(() => { toolRef.current = tool }, [tool])
+  const revealedStrokesRef = useRef<Set<string>>(new Set())
   const isDrawing = useRef(false)
   const currentStroke = useRef<Stroke | null>(null)
   const drawingPage = useRef(1)
@@ -149,6 +214,12 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
         const doc = await pdfjsLib.getDocument({ url: pdfUrl }).promise
         setPdf(doc); setTotalPages(doc.numPages)
         if (!readonly) await updateDocumentPages(documentId, doc.numPages)
+        // Auto-scale: fit page width to container
+        const page = await doc.getPage(1)
+        const naturalWidth = page.getViewport({ scale: 1 }).width
+        const containerWidth = containerRef.current?.clientWidth ?? window.innerWidth
+        const autoScale = Math.min(2.0, Math.max(0.4, (containerWidth - 48) / naturalWidth))
+        setScale(Math.round(autoScale * 20) / 20)
       } catch (e) { console.error('PDF load error:', e) } finally { setIsLoading(false) }
     }
     loadPdf()
@@ -170,7 +241,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
         const canvas = annotCanvasRefs.current[pageNumber - 1]
         if (canvas && renderedPagesRef.current.has(pageNumber)) {
           const dpr = dprRef.current
-          redrawAnnotations(canvas, data, scaleRef.current * dpr, dpr)
+          redrawAnnotations(canvas, data, scaleRef.current * dpr, scaleRef.current * dpr)
         }
       })
       .on('presence', { event: 'sync' }, () => {
@@ -207,7 +278,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       await task.promise
       renderTasksRef.current[idx] = null
       const pa = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
-      redrawAnnotations(annotCanvas, pa, scaleRef.current * dpr, dpr)
+      redrawAnnotations(annotCanvas, pa, scaleRef.current * dpr, scaleRef.current * dpr)
       renderedPagesRef.current.add(pageNum)
 
       // Text selection + link layer
@@ -232,7 +303,8 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
           const pdfAnns = await page.getAnnotations()
           for (const ann of pdfAnns) {
             if (ann.subtype !== 'Link') continue
-            const [x1, y1, x2, y2] = cssVp.convertToViewportRectangle(ann.rect)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const [x1, y1, x2, y2] = (cssVp as any).convertToViewportRectangle(ann.rect)
             const x = Math.min(x1, x2), y = Math.min(y1, y2)
             const w = Math.abs(x2 - x1), h = Math.abs(y2 - y1)
             const a = document.createElement('a')
@@ -270,17 +342,18 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     if (isLoading || totalPages === 0 || !containerRef.current) return
     const observer = new IntersectionObserver(
       entries => {
-        let topEntry: IntersectionObserverEntry | null = null
         entries.forEach(entry => {
           const p = Number(entry.target.getAttribute('data-page'))
           if (entry.isIntersecting) {
-            if (!topEntry || entry.boundingClientRect.top < topEntry.boundingClientRect.top) topEntry = entry
+            visiblePagesRef.current.add(p)
             if (!renderedPagesRef.current.has(p)) renderPageRef.current(p)
+          } else {
+            visiblePagesRef.current.delete(p)
           }
         })
-        if (topEntry) {
-          const p = Number((topEntry as Element).getAttribute('data-page'))
-          if (p && p !== currentPageRef.current) setCurrentPage(p)
+        if (visiblePagesRef.current.size > 0) {
+          const topPage = Math.min(...visiblePagesRef.current)
+          if (topPage !== currentPageRef.current) setCurrentPage(topPage)
         }
       },
       { root: containerRef.current, threshold: [0, 0.1, 0.5] }
@@ -301,6 +374,16 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     rendered.forEach(p => renderPageRef.current(p))
   }, [scale, totalPages])
 
+  useEffect(() => { revealedStrokesRef.current = revealedStrokes }, [revealedStrokes])
+  // Clear revealed strokes when study mode is turned off
+  useEffect(() => {
+    if (!studyMode) {
+      const empty = new Set<string>()
+      revealedStrokesRef.current = empty
+      setRevealedStrokes(empty)
+    }
+  }, [studyMode])
+
   // Redraw annotation layers when studyMode or tool changes (box border visibility depends on tool)
   useEffect(() => {
     const dpr = dprRef.current
@@ -308,7 +391,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       const canvas = annotCanvasRefs.current[p - 1]
       if (canvas) {
         const pa = annotationsRef.current.get(p) ?? { strokes: [], texts: [] }
-        redrawAnnotations(canvas, pa, scaleRef.current * dpr, dpr)
+        redrawAnnotations(canvas, pa, scaleRef.current * dpr, scaleRef.current * dpr)
       }
     })
   }, [studyMode, tool])
@@ -344,7 +427,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     ops.sort((a, b) => a.seq - b.seq)
     for (const op of ops) {
       if (op.type === 'stroke') {
-        if (op.data.points.length >= 2) drawStroke(ctx, op.data, drawScale, studyMode, lineWidthScale)
+        if (op.data.points.length >= 2) drawStroke(ctx, op.data, drawScale, studyMode, lineWidthScale, revealedStrokesRef.current)
       } else {
         const mark = op.data
         if (mark.points.length === 0) continue
@@ -397,11 +480,11 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     }
   }
 
-  function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke, drawScale: number, forceStudyMode: boolean, lineWidthScale: number) {
+  function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke, drawScale: number, forceStudyMode: boolean, lineWidthScale: number, revealedIds: Set<string> = new Set()) {
     if (stroke.points.length < 2) return
     ctx.save()
     const isHighlighter = stroke.tool === 'highlighter' || stroke.tool === 'highlighter-line'
-    const maskMode = isHighlighter && forceStudyMode
+    const maskMode = isHighlighter && forceStudyMode && !revealedIds.has(stroke.id)
     ctx.globalAlpha = maskMode ? 1 : stroke.opacity
     ctx.strokeStyle = maskMode ? stroke.color.slice(0, 7) : stroke.color
     ctx.lineWidth = stroke.size * lineWidthScale
@@ -438,6 +521,31 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   }
 
   function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>, pageNum: number) {
+    // In study mode, clicking a highlight reveals/hides it
+    if (studyMode && !readonly) {
+      const point = getPoint(e)
+      const pa = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
+      const hit = [...pa.strokes].reverse().find(s => {
+        if (s.tool !== 'highlighter' && s.tool !== 'highlighter-line') return false
+        if (s.points.length < 2) return false
+        const halfSize = s.size / 2
+        const xs = s.points.map(p => p.x)
+        const ys = s.points.map(p => p.y)
+        return point.x >= Math.min(...xs) - halfSize && point.x <= Math.max(...xs) + halfSize
+          && point.y >= Math.min(...ys) - halfSize && point.y <= Math.max(...ys) + halfSize
+      })
+      if (hit) {
+        const next = new Set(revealedStrokesRef.current)
+        if (next.has(hit.id)) next.delete(hit.id)
+        else next.add(hit.id)
+        revealedStrokesRef.current = next
+        setRevealedStrokes(new Set(next))
+        const dpr = dprRef.current
+        const canvas = annotCanvasRefs.current[pageNum - 1]
+        if (canvas) redrawAnnotations(canvas, pa, scaleRef.current * dpr, dpr)
+        return
+      }
+    }
     if (readonly || tool === 'none') return
     e.currentTarget.setPointerCapture(e.pointerId)
     drawingPage.current = pageNum
@@ -470,6 +578,8 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
         const annotCanvas = annotCanvasRefs.current[pageNum - 1]
         if (annotCanvas) redrawAnnotations(annotCanvas, curPage, scaleRef.current * dprRef.current, dprRef.current, hit.id)
       } else {
+        // Don't open a new text box immediately after submitting one (race between blur and pointerdown)
+        if (textSubmittingRef.current) return
         editingTextIdRef.current = null
         setEditingTextId(null); setTextInput({ ...point, page: pageNum }); setTextValue('')
         setTextBoxWidth(TBW_DEFAULT); setTextBoxHeight(undefined)
@@ -742,6 +852,8 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       const dpr = dprRef.current
       redrawAnnotations(annotCanvas, updated, scaleRef.current * dpr, dpr)
     }
+    // Non-sticky: revert to selection (none) after placing/editing text
+    setTool('none')
   }
 
   function scheduleSave(pageNum: number, data: PageAnnotations) {
@@ -825,7 +937,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
 
   const canvasStyle = tool === 'none'
     ? { cursor: 'grab', touchAction: 'auto', pointerEvents: 'none' as const }
-    : { cursor: tool==='pen'||tool==='highlighter'||tool==='line'||tool==='highlighter-line' ? 'crosshair' : tool==='eraser' ? 'none' : 'text', touchAction: 'none' as const }
+    : { cursor: (tool==='pen'||tool==='line') ? PEN_CURSOR : (tool==='highlighter'||tool==='highlighter-line') ? HIGHLIGHTER_CURSOR : tool==='eraser' ? ERASER_CURSOR : 'text', touchAction: 'none' as const }
 
   return (
     <div className="flex h-full w-full overflow-hidden">
@@ -873,14 +985,36 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
               </button>
             )}
             <button onClick={() => scrollToPage(Math.max(1, currentPage - 1))} disabled={currentPage === 1}
-              className="px-2.5 py-1.5 text-sm bg-gray-100 rounded-md disabled:opacity-40 hover:bg-gray-200 transition-colors">←</button>
-            <button onClick={() => setPageGridOpen(true)}
-              className="px-2 py-1.5 text-sm font-medium text-gray-700 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors min-w-[4rem] text-center"
-              title="ページ一覧">
-              {currentPage} / {totalPages}
-            </button>
+              className="px-3 py-1.5 text-sm bg-gray-100 rounded-md disabled:opacity-40 hover:bg-gray-200 transition-colors font-medium" title="前のページ">↑</button>
+            {pageInputMode ? (
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={pageInputValue}
+                onChange={e => setPageInputValue(e.target.value.replace(/[^0-9]/g, ''))}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    const p = Math.max(1, Math.min(totalPages, parseInt(pageInputValue)))
+                    if (!isNaN(p)) scrollToPage(p)
+                    setPageInputMode(false)
+                  }
+                  if (e.key === 'Escape') setPageInputMode(false)
+                }}
+                onBlur={() => setPageInputMode(false)}
+                className="w-16 text-center text-sm border-2 border-blue-400 rounded-md px-1 py-1 outline-none"
+                autoFocus
+              />
+            ) : (
+              <button
+                onClick={() => { setPageInputMode(true); setPageInputValue(String(currentPage)) }}
+                className="px-2 py-1.5 text-sm font-medium text-gray-700 bg-gray-50 rounded-md hover:bg-blue-50 hover:text-blue-700 transition-colors min-w-[4rem] text-center"
+                title="クリックでページジャンプ">
+                {currentPage} / {totalPages}
+              </button>
+            )}
             <button onClick={() => scrollToPage(Math.min(totalPages, currentPage + 1))} disabled={currentPage === totalPages}
-              className="px-2.5 py-1.5 text-sm bg-gray-100 rounded-md disabled:opacity-40 hover:bg-gray-200 transition-colors">→</button>
+              className="px-3 py-1.5 text-sm bg-gray-100 rounded-md disabled:opacity-40 hover:bg-gray-200 transition-colors font-medium" title="次のページ">↓</button>
             {totalPages > 1 && (
               <button onClick={() => setPageGridOpen(true)} className="p-1.5 rounded-md bg-gray-100 hover:bg-gray-200 transition-colors text-gray-600" title="ページ一覧">
                 <GridIcon />
@@ -890,7 +1024,17 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
 
           <div className="hidden sm:flex items-center gap-1 flex-shrink-0 ml-1">
             <button onClick={() => setScale(s => Math.max(0.5, s - 0.2))} className="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">－</button>
-            <span className="text-xs text-gray-500 w-11 text-center">{Math.round(scale * 100)}%</span>
+            <button
+              onClick={() => {
+                const presets = [0.75, 1.0, 1.4, 2.0]
+                const next = presets.find(z => z > scale + 0.05) ?? presets[0]
+                setScale(next)
+              }}
+              className="text-xs text-gray-500 w-12 text-center bg-gray-50 hover:bg-blue-50 hover:text-blue-600 rounded py-1 transition-colors"
+              title="クリックでズームプリセット切替（75%→100%→140%→200%）"
+            >
+              {Math.round(scale * 100)}%
+            </button>
             <button onClick={() => setScale(s => Math.min(3, s + 0.2))} className="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">＋</button>
           </div>
 
@@ -904,8 +1048,9 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
             {status === 'saved' && <span className="hidden sm:inline text-xs text-green-500">✓</span>}
             {status === 'error' && <span className="text-xs text-red-500">!</span>}
             <button onClick={() => setStudyMode(m => !m)}
+              title="暗記モード：赤い蛍光ペンで書いた文字を隠します（クリックで表示/非表示切替）"
               className={`hidden md:block px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${studyMode ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-              {studyMode ? '🟥 暗記中' : '📕 暗記'}
+              {studyMode ? `🟥 暗記中${revealedStrokes.size > 0 ? ` (${revealedStrokes.size}表示中)` : ''}` : '📕 暗記'}
             </button>
             <button onClick={handlePrint} className="hidden md:block px-3 py-1.5 text-sm bg-gray-800 text-white rounded-md hover:bg-gray-700 transition-colors">
               🖸 印刷
@@ -929,7 +1074,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
                   </div>
                   <button onClick={() => { setStudyMode(m => !m); setMobileMenuOpen(false) }}
                     className={`w-full px-4 py-3 text-sm text-left flex items-center gap-3 transition-colors hover:bg-gray-50 ${studyMode ? 'text-red-600 font-medium' : 'text-gray-700'}`}>
-                    {studyMode ? '🟥 暗記モード解除' : '📕 暗記モード'}
+                    {studyMode ? `🟥 暗記モード解除${revealedStrokes.size > 0 ? ` (${revealedStrokes.size}表示中)` : ''}` : '📕 暗記モード'}
                   </button>
                   <button onClick={() => { handlePrint(); setMobileMenuOpen(false) }}
                     className="w-full px-4 py-3 text-sm text-left flex items-center gap-3 text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-100">
