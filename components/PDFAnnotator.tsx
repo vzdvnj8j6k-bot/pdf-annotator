@@ -278,6 +278,9 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       pdfCanvas.style.width = cssW + 'px'; pdfCanvas.style.height = cssH + 'px'
       annotCanvas.width = viewport.width; annotCanvas.height = viewport.height
       annotCanvas.style.width = cssW + 'px'; annotCanvas.style.height = cssH + 'px'
+      // Draw annotations immediately after resize so they don't flash during PDF render
+      const paEarly = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
+      redrawAnnotations(annotCanvas, paEarly, scaleRef.current * dpr, scaleRef.current * dpr)
       if (renderTasksRef.current[idx]) { renderTasksRef.current[idx]?.cancel(); renderTasksRef.current[idx] = null }
       const task = page.render({ canvas: pdfCanvas, viewport })
       renderTasksRef.current[idx] = task
