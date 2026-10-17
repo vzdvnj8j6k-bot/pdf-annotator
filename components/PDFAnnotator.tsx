@@ -936,7 +936,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   }, [])
 
   const canvasStyle = tool === 'none'
-    ? { cursor: 'grab', touchAction: 'auto', pointerEvents: 'none' as const }
+    ? { cursor: studyMode ? 'pointer' : 'grab', touchAction: 'auto', pointerEvents: studyMode ? ('auto' as const) : ('none' as const) }
     : { cursor: (tool==='pen'||tool==='line') ? PEN_CURSOR : (tool==='highlighter'||tool==='highlighter-line') ? HIGHLIGHTER_CURSOR : tool==='eraser' ? ERASER_CURSOR : 'text', touchAction: 'none' as const }
 
   return (
