@@ -8,6 +8,14 @@ import { Document } from '@/types'
 
 let pdfjsLib: typeof import('pdfjs-dist') | null = null
 
+// Minimal subset of pdfjs-dist TextItem we need
+interface PdfTextItem {
+  str: string
+  transform: number[]
+  width: number
+  height: number
+}
+
 interface HighlightEntry {
   id: string
   pageNum: number
@@ -67,9 +75,9 @@ export default function HighlightsClient() {
 
           const words: string[] = []
           for (const rawItem of textContent.items) {
-            // TextMarkedContent has no str; skip it
+            // TextMarkedContent has no str; TextItem does
             if (!('str' in rawItem)) continue
-            const item = rawItem as import('pdfjs-dist/types/src/display/api').TextItem
+            const item = rawItem as PdfTextItem
             if (!item.str.trim()) continue
             // Convert PDF user space -> viewport coordinates (y from top)
             // Manually apply viewport.transform: [a,b,c,d,e,f] -> vx=a*x+c*y+e, vy=b*x+d*y+f
