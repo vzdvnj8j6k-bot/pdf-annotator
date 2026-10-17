@@ -10,49 +10,51 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 
 let pdfjsLib: typeof import('pdfjs-dist') | null = null
 
-// Pen cursor: pencil tilted ~45°, tip at bottom-left, hotspot at (1,19)
-const PEN_SVG = [
-  '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">',
-  // shadow
-  '<path d="M2,19 L4,20 L19,5 L17,3 Z" fill="black" opacity="0.15" transform="translate(1,1)"/>',
-  // body (yellow)
-  '<path d="M1,18 L3,20 L18,5 L16,3 Z" fill="#F5C842"/>',
-  // ferrule (silver)
-  '<path d="M16,3 L18,5 L20,3 L18,1 Z" fill="#C8C8C8"/>',
-  // eraser (pink)
-  '<path d="M15,2 L17,0 L19,2 L17,4 Z" fill="#FFB6C1"/>',
-  // wood tip
-  '<path d="M1,18 L3,20 L4,17 Z" fill="#D4A017"/>',
-  // graphite tip
-  '<path d="M0,20 L1,18 L3,20 Z" fill="#333"/>',
-  // outline
-  '<path d="M0,20 L1,18 L3,20 L18,5 L20,3 L17,0 L15,2 L16,3 L18,5" fill="none" stroke="#9A7D00" stroke-width="0.8" stroke-linejoin="round"/>',
-  '</svg>',
-].join('')
-const PEN_CURSOR = (typeof btoa !== 'undefined')
-  ? `url("data:image/svg+xml;base64,${btoa(PEN_SVG)}") 0 20, crosshair`
-  : 'crosshair'
+// Darken a hex color by multiplying each channel
+function darkenHex(hex: string, factor = 0.65): string {
+  const h = hex.replace('#', '')
+  const r = Math.round(parseInt(h.slice(0,2),16) * factor)
+  const g = Math.round(parseInt(h.slice(2,4),16) * factor)
+  const b = Math.round(parseInt(h.slice(4,6),16) * factor)
+  return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`
+}
 
-// Highlighter cursor: thick marker tilted ~45°, tip at bottom-left, hotspot at (1,18)
-const HIGHLIGHTER_SVG = [
-  '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">',
-  // shadow
-  '<path d="M2,21 L6,22 L21,7 L17,3 Z" fill="black" opacity="0.12" transform="translate(1,1)"/>',
-  // body (bright yellow)
-  '<path d="M1,20 L5,22 L20,7 L16,3 Z" fill="#FFE600"/>',
-  // cap end (darker yellow)
-  '<path d="M16,3 L20,7 L22,5 L18,1 Z" fill="#D4B400"/>',
-  // chisel tip (angled flat end)
-  '<path d="M1,20 L5,22 L6,18 L2,16 Z" fill="#D4B400"/>',
-  // shine stripe
-  '<line x1="4" y1="20" x2="19" y2="5" stroke="white" stroke-width="1.8" opacity="0.35"/>',
-  // outline
-  '<path d="M1,20 L5,22 L20,7 L16,3 L18,1 L22,5 L20,7" fill="none" stroke="#B09000" stroke-width="0.9" stroke-linejoin="round"/>',
-  '</svg>',
-].join('')
-const HIGHLIGHTER_CURSOR = (typeof btoa !== 'undefined')
-  ? `url("data:image/svg+xml;base64,${btoa(HIGHLIGHTER_SVG)}") 1 20, crosshair`
-  : 'crosshair'
+// Pen cursor: pencil tilted ~45°, body color matches selected color
+function makePenCursor(color: string): string {
+  const dark = darkenHex(color)
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">',
+    '<path d="M2,19 L4,20 L19,5 L17,3 Z" fill="black" opacity="0.15" transform="translate(1,1)"/>',
+    `<path d="M1,18 L3,20 L18,5 L16,3 Z" fill="${color}"/>`,
+    '<path d="M16,3 L18,5 L20,3 L18,1 Z" fill="#C8C8C8"/>',
+    '<path d="M15,2 L17,0 L19,2 L17,4 Z" fill="#FFB6C1"/>',
+    `<path d="M1,18 L3,20 L4,17 Z" fill="${dark}"/>`,
+    '<path d="M0,20 L1,18 L3,20 Z" fill="#333"/>',
+    `<path d="M0,20 L1,18 L3,20 L18,5 L20,3 L17,0 L15,2 L16,3 L18,5" fill="none" stroke="${dark}" stroke-width="0.8" stroke-linejoin="round"/>`,
+    '</svg>',
+  ].join('')
+  return (typeof btoa !== 'undefined')
+    ? `url("data:image/svg+xml;base64,${btoa(svg)}") 0 20, crosshair`
+    : 'crosshair'
+}
+
+// Highlighter cursor: thick marker tilted ~45°, body color matches selected color
+function makeHighlighterCursor(color: string): string {
+  const dark = darkenHex(color)
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">',
+    '<path d="M2,21 L6,22 L21,7 L17,3 Z" fill="black" opacity="0.12" transform="translate(1,1)"/>',
+    `<path d="M1,20 L5,22 L20,7 L16,3 Z" fill="${color}"/>`,
+    `<path d="M16,3 L20,7 L22,5 L18,1 Z" fill="${dark}"/>`,
+    `<path d="M1,20 L5,22 L6,18 L2,16 Z" fill="${dark}"/>`,
+    '<line x1="4" y1="20" x2="19" y2="5" stroke="white" stroke-width="1.8" opacity="0.35"/>',
+    `<path d="M1,20 L5,22 L20,7 L16,3 L18,1 L22,5 L20,7" fill="none" stroke="${dark}" stroke-width="0.9" stroke-linejoin="round"/>`,
+    '</svg>',
+  ].join('')
+  return (typeof btoa !== 'undefined')
+    ? `url("data:image/svg+xml;base64,${btoa(svg)}") 1 20, crosshair`
+    : 'crosshair'
+}
 
 // Eraser cursor: pink rectangular eraser icon, hotspot at center (14,10)
 const ERASER_SVG = [
@@ -941,7 +943,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
 
   const canvasStyle = tool === 'none'
     ? { cursor: studyMode ? 'pointer' : 'grab', touchAction: 'auto', pointerEvents: studyMode ? ('auto' as const) : ('none' as const) }
-    : { cursor: (tool==='pen'||tool==='line') ? PEN_CURSOR : (tool==='highlighter'||tool==='highlighter-line') ? HIGHLIGHTER_CURSOR : tool==='eraser' ? ERASER_CURSOR : 'text', touchAction: 'none' as const }
+    : { cursor: (tool==='pen'||tool==='line') ? makePenCursor(penColor) : (tool==='highlighter'||tool==='highlighter-line') ? makeHighlighterCursor(highlighterColor) : tool==='eraser' ? ERASER_CURSOR : 'text', touchAction: 'none' as const }
 
   return (
     <div className="flex h-full w-full overflow-hidden">
