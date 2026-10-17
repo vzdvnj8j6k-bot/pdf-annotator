@@ -56,16 +56,16 @@ function makeHighlighterCursor(color: string): string {
     : 'crosshair'
 }
 
-// Eraser cursor: pink rectangular eraser icon, hotspot at center (14,10)
+// Eraser cursor: white rectangular eraser (like MONO), hotspot at center (14,10)
 const ERASER_SVG = [
   '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="20" viewBox="0 0 28 20">',
-  '<rect x="3" y="4" width="22" height="14" rx="3" fill="black" opacity="0.12"/>',
-  '<rect x="2" y="2" width="22" height="14" rx="3" fill="#FFD0DC"/>',
-  '<rect x="2" y="2" width="10" height="14" rx="3" fill="#FF8FA8"/>',
-  '<rect x="8" y="2" width="4" height="14" fill="#FF8FA8"/>',
-  '<line x1="12" y1="2" x2="12" y2="16" stroke="#C07890" stroke-width="1"/>',
-  '<line x1="4" y1="3.5" x2="23" y2="3.5" stroke="white" stroke-width="1" opacity="0.5"/>',
-  '<rect x="2" y="2" width="22" height="14" rx="3" fill="none" stroke="#C07890" stroke-width="1.5"/>',
+  '<rect x="3" y="4" width="22" height="14" rx="2" fill="black" opacity="0.12"/>',
+  '<rect x="2" y="2" width="22" height="14" rx="2" fill="#F0F0F0"/>',
+  '<rect x="2" y="2" width="8" height="14" rx="2" fill="#3A5FA0"/>',
+  '<rect x="7" y="2" width="3" height="14" fill="#3A5FA0"/>',
+  '<line x1="10" y1="2" x2="10" y2="16" stroke="#2A4A80" stroke-width="0.8"/>',
+  '<line x1="4" y1="3.5" x2="23" y2="3.5" stroke="white" stroke-width="0.8" opacity="0.4"/>',
+  '<rect x="2" y="2" width="22" height="14" rx="2" fill="none" stroke="#AAAAAA" stroke-width="1"/>',
   '</svg>',
 ].join('')
 const ERASER_CURSOR = (typeof btoa !== 'undefined')
