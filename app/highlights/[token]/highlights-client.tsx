@@ -40,7 +40,7 @@ export default function HighlightsClient() {
       }
 
       const pdfUrl = getPdfUrl(result.document.pdf_path)
-      const pdf = await pdfjsLib.getDocument(pdfUrl).promise
+      const pdf = await pdfjsLib.getDocument({ url: pdfUrl }).promise
       const entries: HighlightEntry[] = []
 
       for (let p = 1; p <= pdf.numPages; p++) {
