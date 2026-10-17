@@ -66,13 +66,18 @@ export default function HighlightsClient() {
           const maxY = Math.max(...ys) + halfSize
 
           const words: string[] = []
-          for (const item of textContent.items as any[]) {
-            if (!item.str?.trim()) continue
+          for (const rawItem of textContent.items) {
+            // TextMarkedContent has no str; skip it
+            if (!('str' in rawItem)) continue
+            const item = rawItem as import('pdfjs-dist/types/src/display/api').TextItem
+            if (!item.str.trim()) continue
             // Convert PDF user space -> viewport coordinates (y from top)
-            const [vx, vy] = (pdfjsLib!.Util as any).applyTransform(
-              [item.transform[4], item.transform[5]],
-              viewport.transform
-            )
+            // Manually apply viewport.transform: [a,b,c,d,e,f] -> vx=a*x+c*y+e, vy=b*x+d*y+f
+            const [a, b, c, d, e, f] = viewport.transform
+            const px = item.transform[4]
+            const py = item.transform[5]
+            const vx = a * px + c * py + e
+            const vy = b * px + d * py + f
             const itemW = item.width * viewport.scale
             const itemH = (item.height || 8) * viewport.scale
 
