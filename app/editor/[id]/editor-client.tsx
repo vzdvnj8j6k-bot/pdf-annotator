@@ -28,6 +28,8 @@ export default function EditorPage() {
   const [shareError, setShareError] = useState<string | null>(null)
   const [copiedShare, setCopiedShare] = useState(false)
   const [copiedCollab, setCopiedCollab] = useState(false)
+  const [highlightsUrl, setHighlightsUrl] = useState<string | null>(null)
+  const [isLoadingHighlights, setIsLoadingHighlights] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -65,7 +67,10 @@ export default function EditorPage() {
         createShareLink(document.id).catch(() => null),
         getCollabLink(document.id).catch(() => null),
       ])
-      if (shareLink) setShareUrl(`${origin}/share/${shareLink.token}`)
+      if (shareLink) {
+        setShareUrl(`${origin}/share/${shareLink.token}`)
+        setHighlightsUrl(`${origin}/highlights/${shareLink.token}`)
+      }
       if (existingCollab) setCollabUrl(`${origin}/collab/${existingCollab.token}`)
     } catch (e) {
       const msg = e instanceof Error ? e.message : JSON.stringify(e)
@@ -112,6 +117,21 @@ export default function EditorPage() {
     }
   }
 
+  async function openHighlights() {
+    if (highlightsUrl) { window.open(highlightsUrl, '_blank'); return }
+    if (!document) return
+    setIsLoadingHighlights(true)
+    try {
+      const shareLink = await createShareLink(document.id)
+      const url = `${window.location.origin}/highlights/${shareLink.token}`
+      setHighlightsUrl(url)
+      setShareUrl(`${window.location.origin}/share/${shareLink.token}`)
+      window.open(url, '_blank')
+    } finally {
+      setIsLoadingHighlights(false)
+    }
+  }
+
   function closeShareMenu() {
     setShowShareMenu(false)
     setShareError(null)
@@ -138,6 +158,13 @@ export default function EditorPage() {
         <h1 className="font-semibold text-gray-800 truncate flex-1 text-sm">
           {document.title}
         </h1>
+        <button
+          onClick={openHighlights}
+          disabled={isLoadingHighlights}
+          className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
+        >
+          {isLoadingHighlights ? '...' : '📋 一覧'}
+        </button>
         <button
           onClick={openShareMenu}
           className="px-4 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
