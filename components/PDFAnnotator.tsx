@@ -121,7 +121,11 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   const [totalPages, setTotalPages] = useState(0)
   const [scale, setScale] = useState(1.4)
   const [tool, setTool] = useState<Tool>('none')
-  const [color, setColor] = useState('#ff0000')
+  const [penColor, setPenColor] = useState('#000000')
+  const [highlighterColor, setHighlighterColor] = useState('#ff0000')
+  const isHighlighterTool = tool === 'highlighter' || tool === 'highlighter-line'
+  const color = isHighlighterTool ? highlighterColor : penColor
+  function setColor(c: string) { if (isHighlighterTool) setHighlighterColor(c); else setPenColor(c) }
   const [brushSize, setBrushSize] = useState(3)
   const [annotations, setAnnotations] = useState<Map<number, PageAnnotations>>(initialAnnotations ?? new Map())
   const [studyMode, setStudyMode] = useState(false)
