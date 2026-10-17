@@ -61,17 +61,19 @@ export default function SharePage() {
 
   if (!document || !pdfUrl) return null
 
-  return <ShareReader document={document} pdfUrl={pdfUrl} annotations={annotations} />
+  return <ShareReader document={document} pdfUrl={pdfUrl} annotations={annotations} token={token} />
 }
 
 function ShareReader({
   document: doc,
   pdfUrl,
   annotations,
+  token,
 }: {
   document: Document
   pdfUrl: string
   annotations: Map<number, PageAnnotations>
+  token: string
 }) {
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(doc.total_pages || 1)
