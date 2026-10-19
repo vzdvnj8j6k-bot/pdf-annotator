@@ -200,10 +200,12 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       const style = document.createElement('style')
       style.id = id
       style.textContent = [
-        '.pdf-text-layer{position:absolute;top:0;left:0;overflow:hidden;user-select:text;}',
-        '.pdf-text-layer span,.pdf-text-layer br{color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0% 0%;}',
-        '.pdf-text-layer ::selection{background:rgba(0,0,255,0.25);color:transparent;}',
-        '.pdf-text-layer a{position:absolute;display:block;cursor:pointer;}',
+        '.textLayer{position:absolute;inset:0;overflow:clip;line-height:1;pointer-events:none;-webkit-user-select:none;user-select:none;-webkit-text-size-adjust:none;text-size-adjust:none;forced-color-adjust:none;transform-origin:0 0;--min-font-size:1;--text-scale-factor:calc(var(--total-scale-factor)*var(--min-font-size));--min-font-size-inv:calc(1/var(--min-font-size));}',
+        '.textLayer :is(span,br){color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0% 0%;pointer-events:auto;-webkit-user-select:text;user-select:text;line-height:1;padding:0;margin:0;}',
+        '.textLayer >:not(.markedContent),.textLayer .markedContent span:not(.markedContent){--font-height:0;font-size:calc(var(--text-scale-factor)*var(--font-height));--scale-x:1;--rotate:0deg;transform:rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));}',
+        '.textLayer .markedContent{display:contents;}',
+        '.textLayer ::selection{background:rgba(0,0,255,0.25);color:transparent;}',
+        '.textLayer a{position:absolute;display:block;cursor:pointer;}',
       ].join('')
       document.head.appendChild(style)
     }
@@ -294,17 +296,39 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
       const textLayerDiv = textLayerRefs.current[idx]
       if (textLayerDiv && pdfjsLib) {
         textLayerDiv.innerHTML = ''
-        textLayerDiv.style.width = cssW + 'px'
-        textLayerDiv.style.height = cssH + 'px'
+        textLayerDiv.style.setProperty('--total-scale-factor', String(scaleRef.current))
+        textLayerDiv.style.setProperty('--scale-round-x', '1px')
+        textLayerDiv.style.setProperty('--scale-round-y', '1px')
         const cssVp = page.getViewport({ scale: scaleRef.current })
         // Text selection
         try {
           const textContent = await page.getTextContent()
+          // Reorder lines top-to-bottom, then within each line sort left-to-right by X.
+          // PDF Y-axis is bottom-up; higher Y = top of page = comes first in reading order.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const rl = (pdfjsLib as any).renderTextLayer
-          if (rl) {
-            const task = rl({ textContentSource: textContent, container: textLayerDiv, viewport: cssVp })
-            await (task.promise ?? task)
+          if (Array.isArray((textContent as any).items)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const items: any[] = (textContent as any).items
+            const LINE_GAP = 2  // PDF units — conservative: only group truly same-line items
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const lines: { y: number; items: any[] }[] = []
+            for (const item of items) {
+              const y = item.transform ? item.transform[5] : 0
+              const line = lines.find(l => Math.abs(l.y - y) <= LINE_GAP)
+              if (line) { line.items.push(item) }
+              else { lines.push({ y, items: [item] }) }
+            }
+            // Sort lines top-to-bottom (higher PDF Y = higher on page = earlier)
+            // Preserve original stream order within each line (most PDFs have correct LTR order)
+            lines.sort((a, b) => b.y - a.y)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ;(textContent as any).items = lines.flatMap(l => l.items)
+          }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const TL = (pdfjsLib as any).TextLayer
+          if (TL) {
+            const tl = new TL({ textContentSource: textContent, container: textLayerDiv, viewport: cssVp, enhanceTextSelection: true })
+            await tl.render()
           }
         } catch { /* text layer optional */ }
         // Clickable links
@@ -393,7 +417,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
     }
   }, [studyMode])
 
-  // Redraw annotation layers when studyMode or tool changes (box border visibility depends on tool)
+  // Redraw annotation layers when studyMode changes (highlight mask on/off)
   useEffect(() => {
     const dpr = dprRef.current
     renderedPagesRef.current.forEach(p => {
@@ -403,7 +427,24 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
         redrawAnnotations(canvas, pa, scaleRef.current * dpr, scaleRef.current * dpr)
       }
     })
-  }, [studyMode, tool])
+  }, [studyMode]) // eslint-disable-line
+
+  // Redraw annotation layers when switching to/from text tool (text box border visibility)
+  const prevToolRef2 = useRef<Tool>(tool)
+  useEffect(() => {
+    const prevTool = prevToolRef2.current
+    prevToolRef2.current = tool
+    // Only redraw if switching to or from 'text' — other tool changes don't affect annotation rendering
+    if (prevTool !== 'text' && tool !== 'text') return
+    const dpr = dprRef.current
+    renderedPagesRef.current.forEach(p => {
+      const canvas = annotCanvasRefs.current[p - 1]
+      if (canvas) {
+        const pa = annotationsRef.current.get(p) ?? { strokes: [], texts: [] }
+        redrawAnnotations(canvas, pa, scaleRef.current * dpr, scaleRef.current * dpr)
+      }
+    })
+  }, [tool]) // eslint-disable-line
 
   // Render initial pages once loading is done and canvases are in the DOM
   useEffect(() => {
@@ -530,8 +571,8 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
   }
 
   function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>, pageNum: number) {
-    // In study mode, clicking a highlight reveals/hides it
-    if (studyMode && !readonly) {
+    // In study mode with no active tool, clicking a highlight reveals/hides it
+    if (studyMode && !readonly && tool === 'none') {
       const point = getPoint(e)
       const pa = annotationsRef.current.get(pageNum) ?? { strokes: [], texts: [] }
       const hit = [...pa.strokes].reverse().find(s => {
@@ -956,6 +997,9 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
           onToolChange={setTool} onColorChange={setColor} onSizeChange={setBrushSize} onFontSizeChange={setFontSize}
           onUndo={handleUndo} onClearPage={handleClearPage}
           canUndo={(history.current.get(currentPageRef.current)?.length ?? 0) > 0}
+          studyMode={studyMode} revealedCount={revealedStrokes.size}
+          onStudyModeToggle={() => setStudyMode(m => !m)}
+          onPrint={handlePrint}
         />
       )}
 
@@ -984,17 +1028,17 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
 
       <div className="flex-1 flex flex-col overflow-hidden bg-gray-100 min-w-0">
         {/* Header */}
-        <div className="flex items-center gap-2 px-3 py-2 bg-white border-b border-gray-200 shadow-sm">
-          <div className="flex items-center gap-1.5 flex-shrink-0">
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-white border-b border-gray-100 h-11 flex-shrink-0">
+          <div className="flex items-center gap-1 flex-shrink-0">
             {!readonly && (
               <button onClick={() => setToolbarOpen(v => !v)}
-                className={`p-1.5 rounded-md transition-colors ${toolbarOpen ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                className={`p-1.5 rounded-lg transition-colors ${toolbarOpen ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700'}`}
                 title={toolbarOpen ? 'ツールバーを隠す' : 'ツールバーを表示'}>
                 <PanelIcon open={toolbarOpen} />
               </button>
             )}
             <button onClick={() => scrollToPage(Math.max(1, currentPage - 1))} disabled={currentPage === 1}
-              className="px-3 py-1.5 text-sm bg-gray-100 rounded-md disabled:opacity-40 hover:bg-gray-200 transition-colors font-medium" title="前のページ">↑</button>
+              className="w-7 h-7 flex items-center justify-center text-sm text-gray-500 rounded-lg disabled:opacity-30 hover:bg-gray-100 hover:text-gray-800 transition-colors" title="前のページ">↑</button>
             {pageInputMode ? (
               <input
                 type="text"
@@ -1011,83 +1055,83 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
                   if (e.key === 'Escape') setPageInputMode(false)
                 }}
                 onBlur={() => setPageInputMode(false)}
-                className="w-16 text-center text-sm border-2 border-blue-400 rounded-md px-1 py-1 outline-none"
+                className="w-16 text-center text-sm border-2 border-blue-400 rounded-lg px-1 py-0.5 outline-none"
                 autoFocus
               />
             ) : (
               <button
                 onClick={() => { setPageInputMode(true); setPageInputValue(String(currentPage)) }}
-                className="px-2 py-1.5 text-sm font-medium text-gray-700 bg-gray-50 rounded-md hover:bg-blue-50 hover:text-blue-700 transition-colors min-w-[4rem] text-center"
+                className="px-2 py-1 text-xs font-medium text-gray-600 rounded-lg hover:bg-gray-100 hover:text-blue-600 transition-colors min-w-[3.5rem] text-center"
                 title="クリックでページジャンプ">
-                {currentPage} / {totalPages}
+                {currentPage}<span className="text-gray-400 mx-0.5">/</span>{totalPages}
               </button>
             )}
             <button onClick={() => scrollToPage(Math.min(totalPages, currentPage + 1))} disabled={currentPage === totalPages}
-              className="px-3 py-1.5 text-sm bg-gray-100 rounded-md disabled:opacity-40 hover:bg-gray-200 transition-colors font-medium" title="次のページ">↓</button>
+              className="w-7 h-7 flex items-center justify-center text-sm text-gray-500 rounded-lg disabled:opacity-30 hover:bg-gray-100 hover:text-gray-800 transition-colors" title="次のページ">↓</button>
             {totalPages > 1 && (
-              <button onClick={() => setPageGridOpen(true)} className="p-1.5 rounded-md bg-gray-100 hover:bg-gray-200 transition-colors text-gray-600" title="ページ一覧">
+              <button onClick={() => setPageGridOpen(true)} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-colors" title="ページ一覧">
                 <GridIcon />
               </button>
             )}
           </div>
 
-          <div className="hidden sm:flex items-center gap-1 flex-shrink-0 ml-1">
-            <button onClick={() => setScale(s => Math.max(0.5, s - 0.2))} className="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">－</button>
+          <div className="hidden sm:flex items-center gap-0.5 flex-shrink-0 ml-1 bg-gray-100 rounded-lg px-1 py-0.5">
+            <button onClick={() => setScale(s => Math.max(0.5, s - 0.2))} className="w-6 h-6 flex items-center justify-center text-sm text-gray-500 rounded-md hover:bg-white hover:text-gray-800 transition-colors">－</button>
             <button
               onClick={() => {
                 const presets = [0.75, 1.0, 1.4, 2.0]
                 const next = presets.find(z => z > scale + 0.05) ?? presets[0]
                 setScale(next)
               }}
-              className="text-xs text-gray-500 w-12 text-center bg-gray-50 hover:bg-blue-50 hover:text-blue-600 rounded py-1 transition-colors"
-              title="クリックでズームプリセット切替（75%→100%→140%→200%）"
+              className="text-xs text-gray-600 w-11 text-center hover:text-blue-600 transition-colors font-medium"
+              title="クリックでズームプリセット切替"
             >
               {Math.round(scale * 100)}%
             </button>
-            <button onClick={() => setScale(s => Math.min(3, s + 0.2))} className="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">＋</button>
+            <button onClick={() => setScale(s => Math.min(3, s + 0.2))} className="w-6 h-6 flex items-center justify-center text-sm text-gray-500 rounded-md hover:bg-white hover:text-gray-800 transition-colors">＋</button>
           </div>
 
-          <div className="flex items-center gap-2 ml-auto flex-shrink-0">
+          <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
             {!readonly && onlineCount > 1 && (
-              <span className="hidden sm:flex items-center gap-1 text-xs text-green-600 font-medium">
-                <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />{onlineCount}人
+              <span className="hidden sm:flex items-center gap-1 text-xs text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded-full">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />{onlineCount}人
               </span>
             )}
             {status === 'saving' && <span className="hidden sm:inline text-xs text-gray-400">保存中</span>}
-            {status === 'saved' && <span className="hidden sm:inline text-xs text-green-500">✓</span>}
-            {status === 'error' && <span className="text-xs text-red-500">!</span>}
+            {status === 'saved' && <span className="hidden sm:inline text-xs text-green-500 font-medium">✓</span>}
+            {status === 'error' && <span className="text-xs text-red-500 font-medium">!</span>}
             <button onClick={() => setStudyMode(m => !m)}
               title="暗記モード：赤い蛍光ペンで書いた文字を隠します（クリックで表示/非表示切替）"
-              className={`hidden md:block px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${studyMode ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-              {studyMode ? `🟥 暗記中${revealedStrokes.size > 0 ? ` (${revealedStrokes.size}表示中)` : ''}` : '📕 暗記'}
+              className={`hidden md:flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg font-medium transition-colors ${studyMode ? 'bg-red-500 text-white' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`}>
+              {studyMode ? `■ 暗記中${revealedStrokes.size > 0 ? ` (${revealedStrokes.size})` : ''}` : '暗記'}
             </button>
-            <button onClick={handlePrint} className="hidden md:block px-3 py-1.5 text-sm bg-gray-800 text-white rounded-md hover:bg-gray-700 transition-colors">
-              🖸 印刷
+            <button onClick={handlePrint} className="hidden md:flex items-center gap-1 px-2.5 py-1 text-xs text-gray-500 rounded-lg hover:bg-gray-100 hover:text-gray-800 transition-colors">
+              印刷
             </button>
             <div className="md:hidden relative">
               <button onClick={e => { e.stopPropagation(); setMobileMenuOpen(v => !v) }}
-                className="p-1.5 rounded-md bg-gray-100 hover:bg-gray-200 transition-colors text-gray-700" aria-label="メニュー">
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor">
-                  <circle cx="9" cy="4" r="1.5" /><circle cx="9" cy="9" r="1.5" /><circle cx="9" cy="14" r="1.5" />
+                className={`p-1.5 rounded-lg transition-colors ${mobileMenuOpen ? 'bg-gray-200 text-gray-800' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700'}`} aria-label="メニュー">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                  <circle cx="8" cy="3" r="1.5" /><circle cx="8" cy="8" r="1.5" /><circle cx="8" cy="13" r="1.5" />
                 </svg>
               </button>
               {mobileMenuOpen && (
-                <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-40 w-52 overflow-hidden" onClick={e => e.stopPropagation()}>
+                <div className="absolute right-0 top-full mt-1 bg-white border border-gray-100 rounded-2xl shadow-2xl z-40 w-52 overflow-hidden" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
                     <span className="text-xs text-gray-500 font-medium">ズーム</span>
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => setScale(s => Math.max(0.5, s - 0.2))} className="w-7 h-7 text-sm bg-gray-100 rounded hover:bg-gray-200">－</button>
-                      <span className="text-xs text-gray-600 w-10 text-center">{Math.round(scale * 100)}%</span>
-                      <button onClick={() => setScale(s => Math.min(3, s + 0.2))} className="w-7 h-7 text-sm bg-gray-100 rounded hover:bg-gray-200">＋</button>
+                    <div className="flex items-center gap-1 bg-gray-100 rounded-lg px-1 py-0.5">
+                      <button onClick={() => setScale(s => Math.max(0.5, s - 0.2))} className="w-7 h-7 text-sm text-gray-500 rounded-md hover:bg-white transition-colors">－</button>
+                      <span className="text-xs text-gray-600 w-10 text-center font-medium">{Math.round(scale * 100)}%</span>
+                      <button onClick={() => setScale(s => Math.min(3, s + 0.2))} className="w-7 h-7 text-sm text-gray-500 rounded-md hover:bg-white transition-colors">＋</button>
                     </div>
                   </div>
                   <button onClick={() => { setStudyMode(m => !m); setMobileMenuOpen(false) }}
                     className={`w-full px-4 py-3 text-sm text-left flex items-center gap-3 transition-colors hover:bg-gray-50 ${studyMode ? 'text-red-600 font-medium' : 'text-gray-700'}`}>
-                    {studyMode ? `🟥 暗記モード解除${revealedStrokes.size > 0 ? ` (${revealedStrokes.size}表示中)` : ''}` : '📕 暗記モード'}
+                    {studyMode ? `暗記モード解除${revealedStrokes.size > 0 ? ` (${revealedStrokes.size}表示中)` : ''}` : '暗記モード'}
                   </button>
                   <button onClick={() => { handlePrint(); setMobileMenuOpen(false) }}
                     className="w-full px-4 py-3 text-sm text-left flex items-center gap-3 text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-100">
-                    🖸 印刷
+                    印刷
                   </button>
                   {!readonly && (
                     <div className="border-t border-gray-100 px-4 py-2 flex items-center gap-2 text-xs text-gray-400">
@@ -1119,7 +1163,7 @@ export default function PDFAnnotator({ pdfUrl, documentId, readonly = false, ini
                   style={{ display: 'inline-block' }}
                 >
                   <canvas ref={el => { pageCanvasRefs.current[p-1] = el }} className="block" />
-                  <div ref={el => { textLayerRefs.current[p-1] = el }} className="pdf-text-layer" />
+                  <div ref={el => { textLayerRefs.current[p-1] = el }} className="textLayer" />
                   <canvas
                     ref={el => { annotCanvasRefs.current[p-1] = el }}
                     className="absolute top-0 left-0"
